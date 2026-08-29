@@ -3,7 +3,7 @@ from django.db import models
 from django.db.models import F, Q
 from django.db.models.functions import Lower
 
-from core.models import UUIDTimeStampedModel
+from core.models import TaxRate, UUIDTimeStampedModel
 
 
 class Brand(UUIDTimeStampedModel):
@@ -171,3 +171,119 @@ class Size(UUIDTimeStampedModel):
 
     def __str__(self):
         return f"{self.size_scale.name} - {self.label}"
+
+
+class Product(UUIDTimeStampedModel):
+    code = models.CharField(max_length=48, unique=True)
+    name = models.CharField(max_length=160)
+    description = models.TextField(blank=True)
+    brand = models.ForeignKey(
+        Brand,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="products",
+    )
+    category = models.ForeignKey(
+        Category,
+        on_delete=models.PROTECT,
+        related_name="products",
+    )
+    season = models.ForeignKey(
+        Season,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="products",
+    )
+    tax_rate = models.ForeignKey(
+        TaxRate,
+        on_delete=models.PROTECT,
+        related_name="products",
+    )
+    is_active = models.BooleanField(default=True)
+    archived_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("name",)
+
+    def __str__(self):
+        return f"{self.code} - {self.name}"  
+
+
+class ProductVariant(UUIDTimeStampedModel):
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        related_name="variants",
+    )
+    sku = models.CharField(max_length=64, unique=True)
+    color = models.ForeignKey(
+        Color,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="product_variants",
+    )
+    size = models.ForeignKey(
+        Size,
+        on_delete=models.PROTECT,
+        related_name="product_variants",
+    )
+    is_active = models.BooleanField(default=True)
+    archived_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("product", "size", "color")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("product", "color", "size"),
+                name="catalog_variant_product_color_size_unique",
+                nulls_distinct=False,
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.sku} - {self.product.name}"
+
+class ProductBarcode(UUIDTimeStampedModel):
+    class Type(models.TextChoices):
+        CODE128 = "CODE128", "Code 128"
+        EAN13 = "EAN13", "EAN-13"
+        EAN8 = "EAN8", "EAN-8"
+        UPC = "UPC", "UPC"
+        OTHER = "OTHER", "Altro"
+
+    class Source(models.TextChoices):
+        INTERNAL = "INTERNAL", "Interno"
+        MANUFACTURER = "MANUFACTURER", "Produttore"
+
+    variant = models.ForeignKey(
+        ProductVariant,
+        on_delete=models.CASCADE,
+        related_name="barcodes",
+    )
+    code = models.CharField(max_length=128, unique=True)
+    barcode_type = models.CharField(
+        max_length=16,
+        choices=Type.choices,
+    )
+    source = models.CharField(
+        max_length=16,
+        choices=Source.choices,
+    )
+    is_primary = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ("variant", "-is_primary", "code")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("variant",),
+                condition=Q(is_primary=True),
+                name="catalog_barcode_one_primary_per_variant",
+            ),
+        ]
+
+    def __str__(self):
+        return self.code    
