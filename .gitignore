@@ -1,0 +1,37 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Django
+*.log
+staticfiles/
+media/
+
+# React / Node
+node_modules/
+dist/
+.vite/
+coverage/
+
+# Editors
+.vscode/
+.idea/
+
+# Operating systems
+.DS_Store
+Thumbs.db
+
+# Local database and Docker data
+postgres-data/
