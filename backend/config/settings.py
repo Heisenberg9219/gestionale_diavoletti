@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     "catalog.apps.CatalogConfig",
     "suppliers",
     "pricing",
+    "inventory",
 ]
 
 MIDDLEWARE = [
