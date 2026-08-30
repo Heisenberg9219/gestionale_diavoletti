@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     "core.apps.CoreConfig",
     "catalog.apps.CatalogConfig",
     "suppliers",
+    "pricing",
 ]
 
 MIDDLEWARE = [
