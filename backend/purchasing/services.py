@@ -243,6 +243,27 @@ def confirm_goods_receipt(
         )
     )
 
+    from reorders.models import ReorderItem
+    from reorders.services import complete_reorder
+
+    for line in lines:
+        if line.purchase_order_line_id is None:
+            continue
+        total_received = GoodsReceiptLine.objects.filter(
+            purchase_order_line=line.purchase_order_line,
+            receipt__status=GoodsReceipt.Status.CONFIRMED,
+        ).aggregate(total=Sum("quantity_received"))["total"] or 0
+        for reorder_item in ReorderItem.objects.filter(
+            purchase_order_line=line.purchase_order_line,
+            status=ReorderItem.Status.ORDERED,
+            requested_quantity__lte=total_received,
+        ):
+            complete_reorder(
+                reorder_item=reorder_item,
+                completed_by=confirmed_by,
+                completed_at=confirmed_at,
+            )
+
     if purchase_order is not None:
         _refresh_purchase_order_status(purchase_order)
 

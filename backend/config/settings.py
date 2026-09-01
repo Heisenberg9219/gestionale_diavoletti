@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     "documents",
     "notifications",
     "returns",
+    "reorders",
 ]
 
 MIDDLEWARE = [
