@@ -803,6 +803,16 @@ def confirm_sale(
             )
         )
 
+        from inventory.models import StockBalance
+        from notifications.services import notify_stock_depleted_to_owners
+
+        stock_balance = StockBalance.objects.get(
+            variant=line.variant,
+            location=sale.location,
+        )
+        if stock_balance.quantity_on_hand == 0:
+            notify_stock_depleted_to_owners(stock_balance=stock_balance)
+
     sale.number = sale_number
     sale.status = Sale.Status.CONFIRMED
     sale.confirmed_at = confirmed_at

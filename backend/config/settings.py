@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     "giftlists",
     "expenses",
     "documents",
+    "notifications",
 ]
 
 MIDDLEWARE = [
