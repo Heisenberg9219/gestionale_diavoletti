@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 
@@ -12,8 +13,20 @@ from catalog.models import (
 )
 from core.models import Location, TaxRate
 
-from .models import StockBalance, StockMovement, VariantInventoryCost
-from .services import post_stock_movement, transfer_stock
+from .models import (
+    InventoryCountLine,
+    InventoryCountSession,
+    StockBalance,
+    StockMovement,
+    VariantInventoryCost,
+)
+from .services import (
+    confirm_inventory_count,
+    post_stock_movement,
+    record_inventory_count,
+    start_inventory_count,
+    transfer_stock,
+)
 
 
 class InventoryServiceTests(TestCase):
@@ -220,3 +233,200 @@ class InventoryServiceTests(TestCase):
             location=self.source_location,
         )
         self.assertEqual(balance.quantity_on_hand, 5)
+
+
+class PhysicalInventoryServiceTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = get_user_model().objects.create_user(
+            email="inventory-count@example.com",
+            password="test-password",
+        )
+        tax_rate = TaxRate.objects.create(
+            code="COUNT_TEST_VAT",
+            name="IVA test conteggio",
+            percentage="22.00",
+        )
+        cls.category = Category.objects.create(
+            code="COUNT_TEST_CATEGORY",
+            name="Categoria test conteggio",
+        )
+        size_scale = SizeScale.objects.create(
+            code="COUNT_TEST_SCALE",
+            name="Scala test conteggio",
+            scale_type=SizeScale.Type.AGE,
+        )
+        first_size = Size.objects.create(
+            size_scale=size_scale,
+            code="COUNT_TEST_SIZE_1",
+            label="Taglia test 1",
+        )
+        second_size = Size.objects.create(
+            size_scale=size_scale,
+            code="COUNT_TEST_SIZE_2",
+            label="Taglia test 2",
+        )
+        product = Product.objects.create(
+            code="COUNT_TEST_PRODUCT",
+            name="Prodotto test conteggio",
+            category=cls.category,
+            tax_rate=tax_rate,
+        )
+        cls.first_variant = ProductVariant.objects.create(
+            product=product,
+            sku="COUNT_TEST_SKU_1",
+            size=first_size,
+        )
+        cls.second_variant = ProductVariant.objects.create(
+            product=product,
+            sku="COUNT_TEST_SKU_2",
+            size=second_size,
+        )
+        cls.location = Location.objects.create(
+            code="COUNT_TEST_LOCATION",
+            name="Ubicazione test conteggio",
+            type=Location.Type.STOCKROOM,
+        )
+
+    def setUp(self):
+        post_stock_movement(
+            variant=self.first_variant,
+            location=self.location,
+            movement_type=StockMovement.Type.INITIAL_STOCK,
+            quantity_delta=5,
+            unit_cost="10.00",
+        )
+        post_stock_movement(
+            variant=self.second_variant,
+            location=self.location,
+            movement_type=StockMovement.Type.INITIAL_STOCK,
+            quantity_delta=2,
+            unit_cost="20.00",
+        )
+
+    def create_session(self, code="COUNT-2026-001", scope=None):
+        return InventoryCountSession.objects.create(
+            code=code,
+            name="Inventario fisico test",
+            location=self.location,
+            scope=scope or InventoryCountSession.Scope.FULL,
+            created_by=self.user,
+        )
+
+    def test_start_creates_historical_snapshot(self):
+        session = self.create_session()
+        start_inventory_count(session=session)
+
+        session.refresh_from_db()
+        first_line = session.lines.get(variant=self.first_variant)
+        self.assertEqual(session.status, InventoryCountSession.Status.IN_PROGRESS)
+        self.assertEqual(session.lines.count(), 2)
+        self.assertEqual(first_line.expected_quantity, 5)
+        self.assertEqual(first_line.unit_cost_snapshot, Decimal("10.0000"))
+        self.assertEqual(first_line.expected_value, Decimal("50.00"))
+
+    def test_partial_inventory_requires_and_uses_a_scope(self):
+        empty_session = self.create_session(
+            code="COUNT-2026-EMPTY",
+            scope=InventoryCountSession.Scope.PARTIAL,
+        )
+        with self.assertRaises(ValidationError):
+            start_inventory_count(session=empty_session)
+
+        session = self.create_session(
+            code="COUNT-2026-PARTIAL",
+            scope=InventoryCountSession.Scope.PARTIAL,
+        )
+        session.variants.add(self.first_variant)
+        start_inventory_count(session=session)
+        self.assertEqual(session.lines.count(), 1)
+        self.assertEqual(session.lines.get().variant, self.first_variant)
+
+    def test_confirmation_creates_gain_and_loss_movements(self):
+        session = self.create_session()
+        start_inventory_count(session=session)
+        record_inventory_count(
+            line=session.lines.get(variant=self.first_variant),
+            counted_quantity=3,
+            counted_by=self.user,
+        )
+        record_inventory_count(
+            line=session.lines.get(variant=self.second_variant),
+            counted_quantity=4,
+            counted_by=self.user,
+        )
+
+        confirm_inventory_count(session=session, confirmed_by=self.user)
+
+        session.refresh_from_db()
+        first_balance = StockBalance.objects.get(
+            variant=self.first_variant,
+            location=self.location,
+        )
+        second_balance = StockBalance.objects.get(
+            variant=self.second_variant,
+            location=self.location,
+        )
+        self.assertEqual(session.status, InventoryCountSession.Status.CONFIRMED)
+        self.assertEqual(first_balance.quantity_on_hand, 3)
+        self.assertEqual(second_balance.quantity_on_hand, 4)
+        self.assertEqual(
+            session.lines.get(variant=self.first_variant).difference_value,
+            Decimal("-20.00"),
+        )
+        self.assertEqual(
+            session.lines.get(variant=self.second_variant)
+            .adjustment_movement.movement_type,
+            StockMovement.Type.INVENTORY_GAIN,
+        )
+
+    def test_all_lines_must_be_counted(self):
+        session = self.create_session()
+        start_inventory_count(session=session)
+        record_inventory_count(
+            line=session.lines.get(variant=self.first_variant),
+            counted_quantity=5,
+            counted_by=self.user,
+        )
+        with self.assertRaises(ValidationError):
+            confirm_inventory_count(session=session, confirmed_by=self.user)
+        session.refresh_from_db()
+        self.assertEqual(session.status, InventoryCountSession.Status.IN_PROGRESS)
+
+    def test_changed_stock_blocks_confirmation(self):
+        session = self.create_session()
+        start_inventory_count(session=session)
+        for line in session.lines.all():
+            record_inventory_count(
+                line=line,
+                counted_quantity=line.expected_quantity,
+                counted_by=self.user,
+            )
+        post_stock_movement(
+            variant=self.first_variant,
+            location=self.location,
+            movement_type=StockMovement.Type.SALE,
+            quantity_delta=-1,
+        )
+        with self.assertRaises(ValidationError):
+            confirm_inventory_count(session=session, confirmed_by=self.user)
+
+    def test_confirmed_inventory_cannot_be_changed_or_confirmed_twice(self):
+        session = self.create_session()
+        start_inventory_count(session=session)
+        for line in session.lines.all():
+            record_inventory_count(
+                line=line,
+                counted_quantity=line.expected_quantity,
+                counted_by=self.user,
+            )
+        confirm_inventory_count(session=session, confirmed_by=self.user)
+        line = InventoryCountLine.objects.filter(session=session).first()
+        with self.assertRaises(ValidationError):
+            record_inventory_count(
+                line=line,
+                counted_quantity=0,
+                counted_by=self.user,
+            )
+        with self.assertRaises(ValidationError):
+            confirm_inventory_count(session=session, confirmed_by=self.user)

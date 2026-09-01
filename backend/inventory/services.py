@@ -3,9 +3,18 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
-from .models import StockBalance, StockMovement, VariantInventoryCost
+from catalog.models import ProductVariant
+
+from .models import (
+    InventoryCountLine,
+    InventoryCountSession,
+    StockBalance,
+    StockMovement,
+    VariantInventoryCost,
+)
 
 
 INBOUND_TYPES = {
@@ -214,3 +223,199 @@ def transfer_stock(
     )
 
     return outgoing_movement, incoming_movement
+
+
+def _inventory_scope_queryset(session):
+    queryset = ProductVariant.objects.filter(is_active=True)
+    if session.scope == InventoryCountSession.Scope.FULL:
+        return queryset
+
+    scope_filter = Q()
+    has_scope = False
+    selectors = (
+        (session.brands.exists(), Q(product__brand__in=session.brands.all())),
+        (session.categories.exists(), Q(product__category__in=session.categories.all())),
+        (session.seasons.exists(), Q(product__season__in=session.seasons.all())),
+        (session.products.exists(), Q(product__in=session.products.all())),
+        (session.variants.exists(), Q(pk__in=session.variants.all())),
+    )
+    for is_selected, selector in selectors:
+        if is_selected:
+            scope_filter |= selector
+            has_scope = True
+    if not has_scope:
+        raise ValidationError(
+            "Un inventario parziale richiede almeno un criterio di selezione."
+        )
+    return queryset.filter(scope_filter).distinct()
+
+
+@transaction.atomic
+def start_inventory_count(*, session):
+    session = InventoryCountSession.objects.select_for_update().get(pk=session.pk)
+    if session.status != InventoryCountSession.Status.DRAFT:
+        raise ValidationError("Può essere avviato solo un inventario in bozza.")
+    if session.lines.exists():
+        raise ValidationError("La sessione contiene già righe di inventario.")
+
+    variants = list(_inventory_scope_queryset(session).order_by("pk"))
+    if not variants:
+        raise ValidationError("La selezione non contiene articoli da inventariare.")
+
+    variant_ids = [variant.pk for variant in variants]
+    balances = {
+        balance.variant_id: balance.quantity_on_hand
+        for balance in StockBalance.objects.filter(
+            location=session.location,
+            variant_id__in=variant_ids,
+        ).order_by()
+    }
+    costs = {
+        cost.variant_id: cost.weighted_average_unit_cost
+        for cost in VariantInventoryCost.objects.filter(
+            variant_id__in=variant_ids,
+        ).order_by()
+    }
+    lines = []
+    for variant in variants:
+        expected_quantity = balances.get(variant.pk, 0)
+        unit_cost = costs.get(variant.pk, Decimal("0.0000"))
+        expected_value = (
+            Decimal(expected_quantity) * unit_cost
+        ).quantize(MONEY_QUANTIZER, rounding=ROUND_HALF_UP)
+        lines.append(InventoryCountLine(
+            session=session,
+            variant=variant,
+            expected_quantity=expected_quantity,
+            unit_cost_snapshot=unit_cost,
+            expected_value=expected_value,
+        ))
+    InventoryCountLine.objects.bulk_create(lines)
+    session.status = InventoryCountSession.Status.IN_PROGRESS
+    session.started_at = timezone.now()
+    session.save(update_fields=("status", "started_at", "updated_at"))
+    return session
+
+
+@transaction.atomic
+def record_inventory_count(*, line, counted_quantity, counted_by, notes=None):
+    line = (
+        InventoryCountLine.objects.select_for_update()
+        .select_related("session")
+        .get(pk=line.pk)
+    )
+    if line.session.status != InventoryCountSession.Status.IN_PROGRESS:
+        raise ValidationError("Il conteggio non è modificabile in questo stato.")
+    if counted_quantity < 0:
+        raise ValidationError("La quantità contata non può essere negativa.")
+
+    difference = counted_quantity - line.expected_quantity
+    counted_value = (
+        Decimal(counted_quantity) * line.unit_cost_snapshot
+    ).quantize(MONEY_QUANTIZER, rounding=ROUND_HALF_UP)
+    difference_value = (
+        Decimal(difference) * line.unit_cost_snapshot
+    ).quantize(MONEY_QUANTIZER, rounding=ROUND_HALF_UP)
+    line.counted_quantity = counted_quantity
+    line.difference_quantity = difference
+    line.counted_value = counted_value
+    line.difference_value = difference_value
+    line.counted_at = timezone.now()
+    line.counted_by = counted_by
+    if notes is not None:
+        line.notes = notes.strip()
+    line.save(update_fields=(
+        "counted_quantity", "difference_quantity", "counted_value",
+        "difference_value", "counted_at", "counted_by", "notes", "updated_at",
+    ))
+    return line
+
+
+@transaction.atomic
+def confirm_inventory_count(*, session, confirmed_by):
+    session = InventoryCountSession.objects.select_for_update().get(pk=session.pk)
+    if session.status != InventoryCountSession.Status.IN_PROGRESS:
+        raise ValidationError("Può essere confermato solo un inventario in corso.")
+
+    lines = list(
+        InventoryCountLine.objects.select_for_update()
+        .filter(session=session)
+        .select_related("variant")
+        .order_by("pk")
+    )
+    if not lines or any(line.counted_quantity is None for line in lines):
+        raise ValidationError("Tutti gli articoli devono essere conteggiati.")
+
+    balances = {
+        balance.variant_id: balance.quantity_on_hand
+        for balance in StockBalance.objects.select_for_update()
+        .filter(
+            location=session.location,
+            variant_id__in=[line.variant_id for line in lines],
+        )
+        .order_by("pk")
+    }
+    changed_skus = [
+        line.variant.sku
+        for line in lines
+        if balances.get(line.variant_id, 0) != line.expected_quantity
+    ]
+    if changed_skus:
+        raise ValidationError(
+            "Le giacenze sono cambiate durante il conteggio: "
+            + ", ".join(changed_skus[:10])
+        )
+
+    confirmed_at = timezone.now()
+    for line in lines:
+        if line.difference_quantity == 0:
+            continue
+        movement_type = (
+            StockMovement.Type.INVENTORY_GAIN
+            if line.difference_quantity > 0
+            else StockMovement.Type.INVENTORY_LOSS
+        )
+        movement = post_stock_movement(
+            variant=line.variant,
+            location=session.location,
+            movement_type=movement_type,
+            quantity_delta=line.difference_quantity,
+            unit_cost=(
+                line.unit_cost_snapshot
+                if line.difference_quantity > 0
+                else None
+            ),
+            occurred_at=confirmed_at,
+            source_type="inventory.InventoryCountSession",
+            source_id=session.pk,
+            reference_number=session.code,
+            notes=f"Rettifica da inventario {session.code}",
+            created_by=confirmed_by,
+        )
+        line.adjustment_movement = movement
+        line.save(update_fields=("adjustment_movement", "updated_at"))
+
+    session.status = InventoryCountSession.Status.CONFIRMED
+    session.confirmed_at = confirmed_at
+    session.confirmed_by = confirmed_by
+    session.save(update_fields=(
+        "status", "confirmed_at", "confirmed_by", "updated_at",
+    ))
+    return session
+
+
+@transaction.atomic
+def cancel_inventory_count(*, session, cancelled_by):
+    session = InventoryCountSession.objects.select_for_update().get(pk=session.pk)
+    if session.status not in (
+        InventoryCountSession.Status.DRAFT,
+        InventoryCountSession.Status.IN_PROGRESS,
+    ):
+        raise ValidationError("Questa sessione non può essere annullata.")
+    session.status = InventoryCountSession.Status.CANCELLED
+    session.cancelled_at = timezone.now()
+    session.cancelled_by = cancelled_by
+    session.save(update_fields=(
+        "status", "cancelled_at", "cancelled_by", "updated_at",
+    ))
+    return session
