@@ -157,7 +157,7 @@ def post_stock_movement(
     balance.quantity_on_hand = new_location_quantity
     balance.save(update_fields=("quantity_on_hand", "updated_at"))
 
-    return StockMovement.objects.create(
+    movement = StockMovement.objects.create(
         variant=variant,
         location=location,
         movement_type=movement_type,
@@ -171,6 +171,14 @@ def post_stock_movement(
         notes=notes,
         created_by=created_by,
     )
+    try:
+        from integrations.services import enqueue_inventory_sync
+
+        enqueue_inventory_sync(variant=variant, location=location)
+    except LookupError:
+        # The integrations tables may not exist yet while applying migrations.
+        pass
+    return movement
 
 @transaction.atomic
 def transfer_stock(
