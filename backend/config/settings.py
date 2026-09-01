@@ -16,6 +16,9 @@ import environ
 BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env()
 
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
@@ -51,6 +54,7 @@ INSTALLED_APPS = [
     "promotions",
     "vouchers",
     "giftlists",
+    "expenses",
 ]
 
 MIDDLEWARE = [
