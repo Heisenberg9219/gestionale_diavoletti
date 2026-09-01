@@ -238,6 +238,8 @@ def set_sale_line(
     manual_unit_price=None,
     manual_override_reason="",
     manual_override_by=None,
+    reserved_stock_authorization=None,
+    gift_list_item=None,
 ):
     sale = Sale.objects.select_for_update().get(pk=sale.pk)
 
@@ -265,6 +267,16 @@ def set_sale_line(
             "size",
         )
         .get(pk=variant.pk)
+    )
+
+    from giftlists.services import validate_reserved_stock_sale
+
+    validate_reserved_stock_sale(
+        sale=sale,
+        variant=variant,
+        quantity=quantity,
+        authorization=reserved_stock_authorization,
+        gift_list_item=gift_list_item,
     )
 
     now = timezone.now()

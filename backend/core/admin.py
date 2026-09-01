@@ -10,6 +10,7 @@ class ShopSettingsAdmin(admin.ModelAdmin):
         "currency_code",
         "default_markup",
         "return_credit_months",
+        "voucher_validity_months",
     )
     readonly_fields = ("created_at", "updated_at")
 

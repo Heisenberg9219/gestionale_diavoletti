@@ -50,6 +50,13 @@ class ShopSettings(UUIDTimeStampedModel):
             MaxValueValidator(120),
         ],
     )
+    voucher_validity_months = models.PositiveSmallIntegerField(
+        default=6,
+        validators=[
+            MinValueValidator(1),
+            MaxValueValidator(120),
+        ],
+    )
     price_rounding_strategy = models.CharField(
         max_length=24,
         choices=PriceRoundingStrategy.choices,
