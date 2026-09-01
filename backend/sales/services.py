@@ -246,6 +246,12 @@ def set_sale_line(
             "Le righe possono essere modificate solo a vendita aperta."
         )
 
+    if sale.payments.exists():
+        raise ValidationError(
+            "Rimuovere i pagamenti prima di modificare "
+            "le righe della vendita."
+        )
+
     if quantity <= 0:
         raise ValidationError(
             "La quantità deve essere maggiore di zero."
@@ -336,6 +342,16 @@ def set_sale_line(
         variant=variant,
     ).first()
 
+    if (
+        line is not None
+        and line.promotion_allocations.filter(
+            application__status="APPLIED",
+        ).exists()
+    ):
+        raise ValidationError(
+            "Rimuovere la promozione prima di modificare la riga."
+        )
+
     if line is None:
         line = SaleLine(
             sale=sale,
@@ -398,6 +414,12 @@ def set_sale_total_override(
     if sale.status != Sale.Status.OPEN:
         raise ValidationError(
             "Il totale può essere modificato solo a vendita aperta."
+        )
+
+    if sale.payments.exists():
+        raise ValidationError(
+            "Rimuovere i pagamenti prima di modificare "
+            "il totale della vendita."
         )
 
     lines = list(
@@ -473,15 +495,12 @@ def set_sale_total_override(
             "La modifica manuale del totale richiede una motivazione."
         )
 
-    if (
-        final_total_amount < calculated_total
-        and any(
-            line.pricing_mode != SaleLine.PricingMode.STANDARD
-            for line in lines
-        )
+    if any(
+        line.pricing_mode != SaleLine.PricingMode.STANDARD
+        for line in lines
     ):
         raise ValidationError(
-            "Non è possibile applicare un'ulteriore riduzione "
+            "Non è possibile modificare manualmente il totale "
             "durante saldi o promozioni."
         )
 

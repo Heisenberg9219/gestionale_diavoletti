@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     "loyalty",
     "purchasing",
     "sales",
+    "promotions",
 ]
 
 MIDDLEWARE = [
