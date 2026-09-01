@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     "expenses",
     "documents",
     "notifications",
+    "returns",
 ]
 
 MIDDLEWARE = [

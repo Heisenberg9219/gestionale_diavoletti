@@ -37,13 +37,14 @@ def _add_months(value, months):
     return value.replace(year=year, month=month, day=day)
 
 
-def _default_expiry(issued_at):
+def _default_expiry(issued_at, voucher_type):
     settings_row = ShopSettings.objects.first()
-    months = (
-        settings_row.voucher_validity_months
-        if settings_row is not None
-        else 6
-    )
+    if settings_row is None:
+        months = 6
+    elif voucher_type == Voucher.Type.RETURN_CREDIT:
+        months = settings_row.return_credit_months
+    else:
+        months = settings_row.voucher_validity_months
     return _add_months(issued_at, months)
 
 
@@ -79,7 +80,7 @@ def issue_voucher(
         raise ValidationError("Il valore iniziale deve essere positivo.")
 
     issued_at = issued_at or timezone.now()
-    expires_at = expires_at or _default_expiry(issued_at)
+    expires_at = expires_at or _default_expiry(issued_at, voucher_type)
     if expires_at <= issued_at:
         raise ValidationError("La scadenza deve essere successiva all'emissione.")
 
