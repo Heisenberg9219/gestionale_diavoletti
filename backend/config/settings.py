@@ -60,6 +60,7 @@ INSTALLED_APPS = [
     "returns",
     "reorders",
     "integrations",
+    "reporting",
 ]
 
 MIDDLEWARE = [
