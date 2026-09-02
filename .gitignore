@@ -29,6 +29,10 @@ coverage/
 .vscode/
 .idea/
 
+# Local Postman workspace
+.postman/
+postman/
+
 # Operating systems
 .DS_Store
 Thumbs.db
