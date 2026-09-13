@@ -8,6 +8,17 @@ from django.utils import timezone
 from core.models import UUIDTimeStampedModel
 
 
+class SaleDraftChange(UUIDTimeStampedModel):
+    sale = models.ForeignKey("Sale", on_delete=models.PROTECT, related_name="draft_changes")
+    operation = models.CharField(max_length=32, choices=[("REMOVE_LINE", "Rimozione riga"), ("REMOVE_PAYMENT", "Rimozione pagamento"), ("CANCEL", "Annullamento")])
+    reason = models.CharField(max_length=255)
+    snapshot = models.JSONField(default=dict)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+
+    class Meta:
+        ordering = ("created_at", "pk")
+
+
 class CashRegister(UUIDTimeStampedModel):
     code = models.CharField(max_length=32, unique=True)
     name = models.CharField(max_length=120)
@@ -245,6 +256,12 @@ class Sale(UUIDTimeStampedModel):
 
     class Meta:
         ordering = ("-opened_at",)
+        indexes = [
+            models.Index(
+                fields=("status", "confirmed_at"),
+                name="sales_status_confirmed_idx",
+            ),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=("number",),

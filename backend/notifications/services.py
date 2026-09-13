@@ -8,6 +8,8 @@ from django.utils import timezone
 from accounts.models import User
 from expenses.models import Expense
 from vouchers.models import Voucher
+from reorders.models import ReorderItem
+from giftlists.models import GiftList
 
 from .models import Notification, NotificationDelivery, NotificationResolution
 
@@ -176,6 +178,7 @@ def generate_expense_due_notifications(
     notifications = []
     expenses = Expense.objects.filter(
         status__in=(Expense.Status.OPEN, Expense.Status.PARTIALLY_PAID),
+        notifications_enabled=True,
         due_date__isnull=False,
         due_date__lte=cutoff,
     )
@@ -209,6 +212,7 @@ def generate_voucher_expiry_notifications(
     notifications = []
     for voucher in Voucher.objects.filter(
         status=Voucher.Status.ACTIVE,
+        notifications_enabled=True,
         expires_at__gt=now,
         expires_at__lte=cutoff,
     ):
@@ -224,5 +228,21 @@ def generate_voucher_expiry_notifications(
             source_id=voucher.pk,
             action_path=f"/vouchers/{voucher.pk}",
         )
+        notifications.append(notification)
+    return notifications
+
+
+def generate_reorder_notifications(*, users=(), groups=()):
+    notifications = []
+    for item in ReorderItem.objects.filter(status=ReorderItem.Status.PENDING, notifications_enabled=True).select_related("variant"):
+        notification, _ = create_notification(notification_type=Notification.Type.REORDER, priority=Notification.Priority.NORMAL, title=f"Riordino da gestire: {item.variant.sku}", message=f"Quantità richiesta: {item.requested_quantity}.", deduplication_key=f"reorder:{item.pk}", users=users, groups=groups, source_type="reorders.ReorderItem", source_id=item.pk, action_path=f"/reorders/{item.pk}")
+        notifications.append(notification)
+    return notifications
+
+
+def generate_gift_list_notifications(*, users=(), groups=(), as_of=None, days_ahead=7):
+    as_of = as_of or timezone.localdate(); cutoff = as_of + timedelta(days=days_ahead); notifications = []
+    for gift_list in GiftList.objects.filter(status=GiftList.Status.OPEN, notifications_enabled=True, event_date__isnull=False, event_date__lte=cutoff):
+        notification, _ = create_notification(notification_type=Notification.Type.GIFT_LIST, priority=Notification.Priority.HIGH if gift_list.event_date < as_of else Notification.Priority.NORMAL, title=f"Evento lista regalo: {gift_list.title}", message=f"Evento previsto il {gift_list.event_date}.", deduplication_key=f"gift-list:{gift_list.pk}:{gift_list.event_date}", users=users, groups=groups, source_type="giftlists.GiftList", source_id=gift_list.pk, action_path=f"/gift-lists/{gift_list.pk}")
         notifications.append(notification)
     return notifications

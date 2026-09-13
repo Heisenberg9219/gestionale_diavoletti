@@ -1,8 +1,11 @@
 from django.contrib.auth.models import Group
 from django.test import TestCase
-from rest_framework.test import APIClient
+from rest_framework.test import APIClient, APIRequestFactory
 
-from .models import User
+from api.permissions import IsOwnerOrClerk
+
+from .models import User, UserPagePermission
+from .serializers import CurrentUserSerializer
 
 
 class AuthenticationApiTests(TestCase):
@@ -78,3 +81,79 @@ class AuthenticationApiTests(TestCase):
         self.owner.save(update_fields=("status", "updated_at"))
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {login.data['access']}")
         self.assertEqual(self.client.get("/api/v1/auth/me/").status_code, 401)
+
+    def test_managed_user_creation_requires_password(self):
+        self.client.force_authenticate(self.owner)
+        response = self.client.post(
+            "/api/v1/auth/users/",
+            {"email": "commesso@example.com", "first_name": "Anna", "last_name": "Rossi"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("password", response.data["error"]["details"])
+
+    def test_commesso_permissions_allow_the_selected_action_only(self):
+        clerk = User.objects.create_user(
+            email="clerk-permissions@example.com",
+            password="correct-password",
+        )
+        clerk.groups.add(Group.objects.get(name="Commesso"))
+        factory = APIRequestFactory()
+        request = factory.post("/api/v1/customers/customers/", {}, format="json")
+        request.user = clerk
+
+        self.assertFalse(IsOwnerOrClerk().has_permission(request, None))
+        UserPagePermission.objects.create(
+            user=clerk,
+            page_key="Clienti",
+            can_view=True,
+            can_create=True,
+        )
+        self.assertTrue(IsOwnerOrClerk().has_permission(request, None))
+
+    def test_confirmation_requires_update_permission_not_create(self):
+        clerk = User.objects.create_user(
+            email="clerk-confirm@example.com",
+            password="correct-password",
+        )
+        clerk.groups.add(Group.objects.get(name="Commesso"))
+        UserPagePermission.objects.create(
+            user=clerk,
+            page_key="Resi",
+            can_view=True,
+            can_create=True,
+        )
+        request = APIRequestFactory().post("/api/v1/returns/returns/123/confirm/", {}, format="json")
+        request.user = clerk
+
+        self.assertFalse(IsOwnerOrClerk().has_permission(request, None))
+        clerk.page_permissions.filter(page_key="Resi").update(can_update=True)
+        self.assertTrue(IsOwnerOrClerk().has_permission(request, None))
+
+    def test_control_pages_are_never_exposed_to_a_commesso(self):
+        clerk = User.objects.create_user(
+            email="clerk-controls@example.com",
+            password="correct-password",
+        )
+        clerk.groups.add(Group.objects.get(name="Commesso"))
+        UserPagePermission.objects.create(
+            user=clerk,
+            page_key="Report",
+            can_view=True,
+        )
+        UserPagePermission.objects.create(
+            user=clerk,
+            page_key="Integrazioni",
+            can_view=True,
+        )
+        factory = APIRequestFactory()
+        report_request = factory.get("/api/v1/reporting/widgets/")
+        integration_request = factory.get("/api/v1/integrations/connections/")
+        report_request.user = clerk
+        integration_request.user = clerk
+
+        pages = CurrentUserSerializer(clerk).data["page_permissions"]
+        self.assertNotIn("Report", pages)
+        self.assertNotIn("Integrazioni", pages)
+        self.assertFalse(IsOwnerOrClerk().has_permission(report_request, None))
+        self.assertFalse(IsOwnerOrClerk().has_permission(integration_request, None))

@@ -1,0 +1,17 @@
+@media (max-width: 500px) {
+  .logo-stage {
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .logo-stage img {
+    max-height: 135px;
+    filter: drop-shadow(0 12px 14px rgba(33, 19, 22, .18));
+  }
+
+  .login-panel {
+    padding-top: 12px;
+  }
+}

@@ -9,10 +9,15 @@ from django.utils import timezone
 
 from .models import (
     IssuedLoyaltyReward,
+    LoyaltyRewardRedemption,
     LoyaltyEarningActivation,
     LoyaltyPointMovement,
     LoyaltyRewardDefinition,
 )
+
+
+def _money(value):
+    return Decimal(str(value)).quantize(Decimal("0.01"))
 
 
 @transaction.atomic
@@ -215,3 +220,50 @@ def issue_loyalty_reward(
         point_movement=point_movement,
         created_by=created_by,
     )
+
+
+@transaction.atomic
+def apply_reward_to_sale(*, reward, sale, applied_by):
+    from sales.models import Sale
+    from sales.services import set_sale_total_override
+
+    sale = Sale.objects.select_for_update().get(pk=sale.pk)
+    reward = IssuedLoyaltyReward.objects.select_for_update().get(pk=reward.pk)
+    if sale.status != Sale.Status.OPEN or sale.payments.exists() or not sale.lines.exists():
+        raise ValidationError("Il premio richiede una vendita aperta con righe e senza pagamenti.")
+    if sale.customer_id != reward.customer_id:
+        raise ValidationError("Il premio appartiene a un altro cliente.")
+    if reward.status != IssuedLoyaltyReward.Status.ACTIVE or reward.expires_at <= timezone.now():
+        raise ValidationError("Il premio non e' disponibile.")
+    if sale.manual_total_override_amount is not None or sale.loyalty_reward_redemptions.filter(status=LoyaltyRewardRedemption.Status.APPLIED).exists():
+        raise ValidationError("La vendita ha gia' una modifica totale o un premio applicato.")
+    base_total = _money(sale.final_total_amount)
+    if base_total < reward.minimum_purchase_amount:
+        raise ValidationError("Il totale non raggiunge la soglia minima del premio.")
+    discount = min(_money(reward.remaining_amount), base_total) if reward.fixed_amount is not None else _money(base_total * Decimal(str(reward.percentage)) / Decimal("100"))
+    if discount <= 0:
+        raise ValidationError("Il premio non produce uno sconto applicabile.")
+    set_sale_total_override(sale=sale, final_total_amount=_money(base_total - discount), manual_override_reason=f"Premio fedelta' {reward.code}", manual_override_by=applied_by)
+    redemption = LoyaltyRewardRedemption.objects.create(reward=reward, sale=sale, discount_amount=discount, applied_by=applied_by)
+    if reward.fixed_amount is not None:
+        reward.remaining_amount = _money(reward.remaining_amount - discount)
+        if reward.remaining_amount == 0: reward.status = IssuedLoyaltyReward.Status.USED
+    else: reward.status = IssuedLoyaltyReward.Status.USED
+    reward.save(update_fields=("remaining_amount", "status", "updated_at"))
+    return redemption
+
+
+@transaction.atomic
+def cancel_reward_redemption(*, redemption, cancelled_by, reason):
+    from sales.services import set_sale_total_override
+    redemption = LoyaltyRewardRedemption.objects.select_for_update().select_related("sale", "reward").get(pk=redemption.pk)
+    if redemption.status != LoyaltyRewardRedemption.Status.APPLIED or redemption.sale.status != redemption.sale.Status.OPEN or redemption.sale.payments.exists() or not reason.strip():
+        raise ValidationError("Il premio non puo' essere rimosso in questo stato o senza motivazione.")
+    reward = IssuedLoyaltyReward.objects.select_for_update().get(pk=redemption.reward_id)
+    set_sale_total_override(sale=redemption.sale, final_total_amount=redemption.sale.calculated_total_amount, manual_override_reason=reason, manual_override_by=cancelled_by)
+    if reward.fixed_amount is not None: reward.remaining_amount = _money(reward.remaining_amount + redemption.discount_amount)
+    reward.status = IssuedLoyaltyReward.Status.ACTIVE
+    reward.save(update_fields=("remaining_amount", "status", "updated_at"))
+    redemption.status = LoyaltyRewardRedemption.Status.CANCELLED; redemption.cancelled_at = timezone.now(); redemption.cancelled_by = cancelled_by; redemption.cancellation_reason = reason.strip()
+    redemption.save(update_fields=("status", "cancelled_at", "cancelled_by", "cancellation_reason", "updated_at"))
+    return redemption

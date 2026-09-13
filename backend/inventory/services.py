@@ -246,6 +246,7 @@ def _inventory_scope_queryset(session):
         (session.seasons.exists(), Q(product__season__in=session.seasons.all())),
         (session.products.exists(), Q(product__in=session.products.all())),
         (session.variants.exists(), Q(pk__in=session.variants.all())),
+        (session.suppliers.exists(), Q(supplier_links__supplier__in=session.suppliers.all())),
     )
     for is_selected, selector in selectors:
         if is_selected:

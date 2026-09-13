@@ -38,6 +38,7 @@ class ReorderItem(UUIDTimeStampedModel):
     )
     reason = models.CharField(max_length=255, blank=True)
     notes = models.TextField(blank=True)
+    notifications_enabled = models.BooleanField(default=False)
     added_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,

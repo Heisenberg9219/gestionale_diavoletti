@@ -327,3 +327,26 @@ class IssuedLoyaltyReward(UUIDTimeStampedModel):
 
     def __str__(self):
         return f"{self.code} - {self.customer.full_name}"
+
+
+class LoyaltyRewardRedemption(UUIDTimeStampedModel):
+    class Status(models.TextChoices):
+        APPLIED = "APPLIED", "Applicato"
+        CANCELLED = "CANCELLED", "Annullato"
+
+    reward = models.ForeignKey(IssuedLoyaltyReward, on_delete=models.PROTECT, related_name="redemptions")
+    sale = models.ForeignKey("sales.Sale", on_delete=models.PROTECT, related_name="loyalty_reward_redemptions")
+    discount_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.APPLIED)
+    applied_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="applied_loyalty_reward_redemptions")
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancelled_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="cancelled_loyalty_reward_redemptions")
+    cancellation_reason = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        constraints = [
+            models.UniqueConstraint(fields=("reward", "sale"), name="loyalty_reward_sale_unique"),
+            models.CheckConstraint(condition=Q(discount_amount__gt=0), name="loyalty_reward_redemption_amount_positive"),
+            models.CheckConstraint(condition=(Q(status="APPLIED", cancelled_at__isnull=True, cancelled_by__isnull=True, cancellation_reason="") | Q(status="CANCELLED", cancelled_at__isnull=False, cancelled_by__isnull=False, cancellation_reason__gt="")), name="loyalty_reward_redemption_audit"),
+        ]

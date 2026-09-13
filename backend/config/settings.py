@@ -16,9 +16,19 @@ import environ
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env()
+env.read_env(BASE_DIR.parent / ".env")
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
+AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT = env(
+    "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT",
+    default="",
+)
+AZURE_DOCUMENT_INTELLIGENCE_KEY = env(
+    "AZURE_DOCUMENT_INTELLIGENCE_KEY",
+    default="",
+)
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
@@ -43,6 +53,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     "corsheaders",
     "rest_framework",
+    "drf_spectacular",
     "rest_framework_simplejwt.token_blacklist",
     "accounts.apps.AccountsConfig",
     "core.apps.CoreConfig",
@@ -157,6 +168,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AUTH_USER_MODEL = "accounts.User"
 
 REST_FRAMEWORK = {
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "api.authentication.ActiveUserJWTAuthentication",
     ),
@@ -166,6 +178,13 @@ REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "api.pagination.DefaultPagination",
     "PAGE_SIZE": 50,
     "EXCEPTION_HANDLER": "api.exceptions.api_exception_handler",
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "I Diavoletti API",
+    "DESCRIPTION": "API del gestionale I Diavoletti.",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
 }
 
 SIMPLE_JWT = {
@@ -178,7 +197,7 @@ SIMPLE_JWT = {
 
 CORS_ALLOWED_ORIGINS = env.list(
     "DJANGO_CORS_ALLOWED_ORIGINS",
-    default=["http://localhost:5173"],
+    default=["http://localhost:5173", "http://127.0.0.1:5173"],
 )
 CORS_ALLOW_CREDENTIALS = True
 

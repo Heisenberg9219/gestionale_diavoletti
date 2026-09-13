@@ -70,6 +70,7 @@ def issue_voucher(
     holder_last_name="",
     source_type="",
     source_id=None,
+    notifications_enabled=False,
     notes="",
 ):
     if voucher_type not in {choice.value for choice in Voucher.Type}:
@@ -95,6 +96,7 @@ def issue_voucher(
         holder_last_name=holder_last_name.strip(),
         source_type=source_type.strip(),
         source_id=source_id,
+        notifications_enabled=notifications_enabled,
         issued_by=issued_by,
         notes=notes,
     )
@@ -155,8 +157,8 @@ def authorize_expired_voucher(
     authorized_by,
     authorized_at=None,
 ):
-    voucher = Voucher.objects.select_for_update().get(pk=voucher.pk)
     sale = Sale.objects.select_for_update().get(pk=sale.pk)
+    voucher = Voucher.objects.select_for_update().get(pk=voucher.pk)
     authorized_at = authorized_at or timezone.now()
 
     if sale.status != Sale.Status.OPEN:

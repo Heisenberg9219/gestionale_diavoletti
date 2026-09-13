@@ -7,6 +7,9 @@ from django.db.models import Count, DecimalField, ExpressionWrapper, F, Sum
 from django.db.models.functions import TruncDay, TruncMonth, TruncWeek
 from django.utils import timezone
 
+from inventory.models import InventoryCountLine, StockBalance, VariantInventoryCost
+from promotions.models import SalePromotionAllocation
+from returns.models import CustomerReturn
 from sales.models import Sale, SaleLine
 
 from .models import ReportSnapshot, ReportWidget
@@ -43,22 +46,45 @@ def _sales_queryset(date_from, date_to, filters):
     return queryset
 
 
+def _metric_value(widget, sales, date_from, date_to):
+    if widget.metric == ReportWidget.Metric.SALES:
+        return sales.count()
+    if widget.metric == ReportWidget.Metric.REVENUE:
+        return sales.aggregate(value=Sum("final_total_amount"))["value"] or Decimal("0.00")
+    if widget.metric == ReportWidget.Metric.DISCOUNTS:
+        return sales.aggregate(value=Sum("discount_amount"))["value"] or Decimal("0.00")
+    if widget.metric == ReportWidget.Metric.GROSS_MARGIN:
+        totals = sales.aggregate(revenue=Sum("final_total_amount"), cost=Sum("total_cost_amount"))
+        return (totals["revenue"] or Decimal("0.00")) - (totals["cost"] or Decimal("0.00"))
+    if widget.metric == ReportWidget.Metric.UNITS:
+        return SaleLine.objects.filter(sale__in=sales).aggregate(value=Sum("quantity"))["value"] or 0
+    if widget.metric == ReportWidget.Metric.RETURNS:
+        return CustomerReturn.objects.filter(status=CustomerReturn.Status.CONFIRMED, confirmed_at__date__range=(date_from, date_to)).aggregate(value=Sum("total_refund_amount"))["value"] or Decimal("0.00")
+    if widget.metric == ReportWidget.Metric.INVENTORY_VALUE:
+        return VariantInventoryCost.objects.aggregate(value=Sum("inventory_value"))["value"] or Decimal("0.00")
+    if widget.metric == ReportWidget.Metric.INVENTORY_VARIANCE:
+        return InventoryCountLine.objects.filter(session__status="CONFIRMED", session__confirmed_at__date__range=(date_from, date_to)).aggregate(value=Sum("difference_value"))["value"] or Decimal("0.00")
+    raise ValidationError("Metrica non supportata.")
+
+
+def _grouped_series(widget, sales):
+    lines = SaleLine.objects.filter(sale__in=sales)
+    if widget.group_by == ReportWidget.GroupBy.BRAND:
+        rows = lines.values("variant__product__brand__name").annotate(value=Sum("net_amount")).order_by("variant__product__brand__name")
+        return [{"label": row["variant__product__brand__name"] or "Senza marca", "value": str(row["value"])} for row in rows]
+    if widget.group_by == ReportWidget.GroupBy.CATEGORY:
+        rows = lines.values("variant__product__category__name").annotate(value=Sum("net_amount")).order_by("variant__product__category__name")
+        return [{"label": row["variant__product__category__name"], "value": str(row["value"])} for row in rows]
+    if widget.group_by == ReportWidget.GroupBy.PROMOTION:
+        rows = SalePromotionAllocation.objects.filter(application__sale__in=sales, application__status="APPLIED").values("application__offer_name_snapshot").annotate(value=Sum("discount_amount")).order_by("application__offer_name_snapshot")
+        return [{"label": row["application__offer_name_snapshot"], "value": str(row["value"])} for row in rows]
+    return []
+
+
 def calculate_widget(widget, today=None):
     date_from, date_to = resolve_period(widget, today=today)
     sales = _sales_queryset(date_from, date_to, widget.filters)
-    if widget.metric == ReportWidget.Metric.SALES:
-        value = sales.count()
-    elif widget.metric == ReportWidget.Metric.REVENUE:
-        value = sales.aggregate(value=Sum("final_total_amount"))["value"] or Decimal("0.00")
-    elif widget.metric == ReportWidget.Metric.DISCOUNTS:
-        value = sales.aggregate(value=Sum("discount_amount"))["value"] or Decimal("0.00")
-    elif widget.metric == ReportWidget.Metric.GROSS_MARGIN:
-        totals = sales.aggregate(revenue=Sum("final_total_amount"), cost=Sum("total_cost_amount"))
-        value = (totals["revenue"] or Decimal("0.00")) - (totals["cost"] or Decimal("0.00"))
-    elif widget.metric == ReportWidget.Metric.UNITS:
-        value = SaleLine.objects.filter(sale__in=sales).aggregate(value=Sum("quantity"))["value"] or 0
-    else:
-        raise ValidationError("Questa metrica sarà calcolata dal relativo modulo di report.")
+    value = _metric_value(widget, sales, date_from, date_to)
 
     result = {"value": str(value), "date_from": str(date_from), "date_to": str(date_to), "series": []}
     if widget.group_by in (ReportWidget.GroupBy.DAY, ReportWidget.GroupBy.WEEK, ReportWidget.GroupBy.MONTH):
@@ -68,6 +94,16 @@ def calculate_widget(widget, today=None):
     elif widget.group_by == ReportWidget.GroupBy.CHANNEL:
         grouped = sales.values("channel").annotate(value=Sum("final_total_amount")).order_by("channel")
         result["series"] = [{"label": row["channel"], "value": str(row["value"])} for row in grouped]
+    else:
+        result["series"] = _grouped_series(widget, sales)
+    if widget.compare_previous_period:
+        days = (date_to - date_from).days + 1
+        previous_to = date_from - timedelta(days=1)
+        previous_from = previous_to - timedelta(days=days - 1)
+        previous = _metric_value(widget, _sales_queryset(previous_from, previous_to, widget.filters), previous_from, previous_to)
+        result["previous_value"] = str(previous)
+        result["previous_date_from"] = str(previous_from)
+        result["previous_date_to"] = str(previous_to)
     return result
 
 

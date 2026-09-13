@@ -1,13 +1,173 @@
-from django.core.exceptions import ValidationError
+from decimal import Decimal
+
+from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db import transaction
 from django.utils import timezone
 
 from .models import (
     BusinessDocument,
     DocumentNumberSequence,
+    DocumentAttachment,
+    DocumentOcrAnalysis,
     DocumentStatusChange,
     DocumentType,
 )
+
+
+def _decimal_string(value):
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        value = value.get("amount", value.get("value"))
+    elif hasattr(value, "amount"):
+        value = value.amount
+    if value is None:
+        return None
+    return str(Decimal(str(value)).quantize(Decimal("0.01")))
+
+
+def _field_value(fields, name):
+    field = fields.get(name)
+    if field is None:
+        return None
+    value = getattr(field, "value", None)
+    if value is not None:
+        return value
+    for attribute in (
+        "value_string", "value_date", "value_time", "value_phone_number",
+        "value_number", "value_integer", "value_currency", "value_address",
+        "value_boolean", "value_array", "value_object", "value_country_region",
+    ):
+        value = getattr(field, attribute, None)
+        if value is not None:
+            return value
+    return getattr(field, "content", None)
+
+
+def _field_confidence(fields, name):
+    field = fields.get(name)
+    if field is None:
+        return None
+    confidence = getattr(field, "confidence", None)
+    return float(confidence) if confidence is not None else None
+
+
+def _azure_invoice_proposal(result):
+    document = result.documents[0] if result.documents else None
+    if document is None:
+        raise ValidationError("Azure non ha riconosciuto una fattura nel PDF.")
+
+    fields = document.fields
+    items = []
+    for item in _field_value(fields, "Items") or []:
+        item_fields = getattr(item, "value_object", {}) or {}
+        items.append({
+            "description": _field_value(item_fields, "Description"),
+            "quantity": _field_value(item_fields, "Quantity"),
+            "unit_price": _decimal_string(_field_value(item_fields, "UnitPrice")),
+            "amount": _decimal_string(_field_value(item_fields, "Amount")),
+            "tax": _decimal_string(_field_value(item_fields, "Tax")),
+        })
+
+    return {
+        "supplier_name": _field_value(fields, "VendorName"),
+        "supplier_vat_number": _field_value(fields, "VendorTaxId"),
+        "invoice_number": _field_value(fields, "InvoiceId"),
+        "invoice_date": str(_field_value(fields, "InvoiceDate") or "") or None,
+        "due_date": str(_field_value(fields, "DueDate") or "") or None,
+        "currency": _currency_code(_field_value(fields, "InvoiceTotal")),
+        "taxable_amount": _decimal_string(_field_value(fields, "SubTotal")),
+        "tax_amount": _decimal_string(_field_value(fields, "TotalTax")),
+        "total_amount": _decimal_string(_field_value(fields, "InvoiceTotal")),
+        "items": items,
+        "confidence": {
+            "supplier_name": _field_confidence(fields, "VendorName"),
+            "invoice_number": _field_confidence(fields, "InvoiceId"),
+            "invoice_date": _field_confidence(fields, "InvoiceDate"),
+            "total_amount": _field_confidence(fields, "InvoiceTotal"),
+            "items": _field_confidence(fields, "Items"),
+        },
+    }
+
+
+def _currency_code(value):
+    if isinstance(value, dict):
+        return value.get("currency_code") or value.get("currencyCode")
+    return getattr(value, "currency_code", None)
+
+
+def _json_value(value):
+    if isinstance(value, dict):
+        return {key: _json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_value(item) for item in value]
+    if isinstance(value, Decimal):
+        return str(value)
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return value
+
+
+def _analyze_with_azure(*, content):
+    endpoint = getattr(settings, "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT", "")
+    api_key = getattr(settings, "AZURE_DOCUMENT_INTELLIGENCE_KEY", "")
+    if not endpoint or not api_key:
+        raise ImproperlyConfigured(
+            "Configura AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT e "
+            "AZURE_DOCUMENT_INTELLIGENCE_KEY nell'ambiente."
+        )
+    try:
+        from azure.ai.documentintelligence import DocumentIntelligenceClient
+        from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
+        from azure.core.credentials import AzureKeyCredential
+    except ImportError as exc:
+        raise ImproperlyConfigured(
+            "Il pacchetto azure-ai-documentintelligence non è installato."
+        ) from exc
+
+    client = DocumentIntelligenceClient(
+        endpoint=endpoint,
+        credential=AzureKeyCredential(api_key),
+    )
+    poller = client.begin_analyze_document(
+        "prebuilt-invoice",
+        AnalyzeDocumentRequest(bytes_source=content),
+    )
+    return poller.result()
+
+
+def analyze_invoice_attachment_with_azure(*, attachment, requested_by):
+    attachment = DocumentAttachment.objects.get(pk=attachment.pk)
+    if not attachment.file.name.lower().endswith(".pdf"):
+        raise ValidationError("L'analisi OCR della fattura richiede un file PDF.")
+
+    analysis = DocumentOcrAnalysis.objects.create(
+        attachment=attachment,
+        provider=DocumentOcrAnalysis.Provider.AZURE_DOCUMENT_INTELLIGENCE,
+        requested_by=requested_by,
+    )
+    try:
+        attachment.file.open("rb")
+        try:
+            result = _analyze_with_azure(content=attachment.file.read())
+        finally:
+            attachment.file.close()
+        analysis.proposed_data = _azure_invoice_proposal(result)
+        analysis.provider_response = _json_value(result.as_dict())
+        analysis.status = DocumentOcrAnalysis.Status.SUCCEEDED
+        analysis.analyzed_at = timezone.now()
+        analysis.save(update_fields=(
+            "proposed_data", "provider_response", "status", "analyzed_at", "updated_at",
+        ))
+    except Exception as exc:
+        analysis.status = DocumentOcrAnalysis.Status.FAILED
+        analysis.error_message = str(exc)
+        analysis.analyzed_at = timezone.now()
+        analysis.save(update_fields=(
+            "status", "error_message", "analyzed_at", "updated_at",
+        ))
+    return analysis
 
 
 def _record_status_change(*, document, previous_status, changed_by, reason=""):

@@ -81,3 +81,22 @@ class User(AbstractUser):
 
     def __str__(self):
         return self.email
+
+
+class UserPagePermission(models.Model):
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="page_permissions"
+    )
+    page_key = models.CharField(max_length=48)
+    can_view = models.BooleanField(default=False)
+    can_create = models.BooleanField(default=False)
+    can_update = models.BooleanField(default=False)
+    can_delete = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ("page_key",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("user", "page_key"), name="accounts_user_page_permission_unique"
+            )
+        ]

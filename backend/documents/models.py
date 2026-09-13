@@ -185,6 +185,52 @@ class DocumentAttachment(UUIDTimeStampedModel):
         ordering = ("created_at",)
 
 
+class DocumentOcrAnalysis(UUIDTimeStampedModel):
+    class Provider(models.TextChoices):
+        AZURE_DOCUMENT_INTELLIGENCE = "AZURE_DOCUMENT_INTELLIGENCE", "Azure Document Intelligence"
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "In attesa"
+        SUCCEEDED = "SUCCEEDED", "Completata"
+        FAILED = "FAILED", "Fallita"
+
+    attachment = models.ForeignKey(
+        DocumentAttachment,
+        on_delete=models.PROTECT,
+        related_name="ocr_analyses",
+    )
+    provider = models.CharField(max_length=48, choices=Provider.choices)
+    model_id = models.CharField(max_length=96, default="prebuilt-invoice")
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    proposed_data = models.JSONField(default=dict, blank=True)
+    provider_response = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True)
+    analyzed_at = models.DateTimeField(null=True, blank=True)
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="requested_document_ocr_analyses",
+    )
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(
+                fields=("attachment", "status"),
+                name="doc_ocr_attach_status_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"OCR {self.attachment.original_name} - {self.get_status_display()}"
+
+
 class DocumentStatusChange(UUIDTimeStampedModel):
     document = models.ForeignKey(
         BusinessDocument,

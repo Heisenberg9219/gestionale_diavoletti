@@ -1,13 +1,14 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from unittest.mock import patch
 
 from catalog.models import Category, Product, ProductVariant, Size, SizeScale
 from core.models import Location, TaxRate
 from inventory.models import StockMovement
 from inventory.services import post_stock_movement
 
-from .models import IntegrationConnection, SyncEvent, WebhookEvent
-from .services import available_online_quantity, register_webhook
+from .models import ExternalObjectMapping, IntegrationConnection, SyncEvent, WebhookEvent
+from .services import available_online_quantity, process_sync_event, register_webhook
 
 
 class IntegrationServiceTests(TestCase):
@@ -42,3 +43,45 @@ class IntegrationServiceTests(TestCase):
         post_stock_movement(variant=self.variant, location=self.first, movement_type=StockMovement.Type.INITIAL_STOCK, quantity_delta=4, unit_cost="10")
         event = SyncEvent.objects.get(event_type=SyncEvent.Type.INVENTORY)
         self.assertEqual(event.payload["quantity"], 4)
+
+    @patch("integrations.services._shopify_graphql")
+    def test_inventory_event_sends_quantity_for_each_online_location(self, graphql):
+        post_stock_movement(
+            variant=self.variant,
+            location=self.first,
+            movement_type=StockMovement.Type.INITIAL_STOCK,
+            quantity_delta=2,
+            unit_cost="10",
+        )
+        post_stock_movement(
+            variant=self.variant,
+            location=self.second,
+            movement_type=StockMovement.Type.INITIAL_STOCK,
+            quantity_delta=3,
+            unit_cost="10",
+        )
+        ExternalObjectMapping.objects.create(
+            connection=self.connection,
+            object_type=ExternalObjectMapping.Type.VARIANT,
+            internal_id=self.variant.pk,
+            external_id="gid://shopify/ProductVariant/10",
+            metadata={"inventory_item_id": "gid://shopify/InventoryItem/20"},
+        )
+        for location, external_id in (
+            (self.first, "gid://shopify/Location/1"),
+            (self.second, "gid://shopify/Location/2"),
+        ):
+            ExternalObjectMapping.objects.create(
+                connection=self.connection,
+                object_type=ExternalObjectMapping.Type.LOCATION,
+                internal_id=location.pk,
+                external_id=external_id,
+            )
+        graphql.return_value = {"inventorySetQuantities": {"userErrors": []}}
+
+        event = SyncEvent.objects.get(event_type=SyncEvent.Type.INVENTORY)
+        processed = process_sync_event(event=event)
+
+        self.assertEqual(processed.status, SyncEvent.Status.SUCCEEDED)
+        quantities = graphql.call_args.kwargs["variables"]["input"]["quantities"]
+        self.assertEqual({row["quantity"] for row in quantities}, {2, 3})

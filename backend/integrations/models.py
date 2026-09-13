@@ -42,6 +42,7 @@ class ExternalObjectMapping(UUIDTimeStampedModel):
     class Type(models.TextChoices):
         PRODUCT = "PRODUCT", "Prodotto"
         VARIANT = "VARIANT", "Variante"
+        LOCATION = "LOCATION", "Sede"
         CUSTOMER = "CUSTOMER", "Cliente"
         ORDER = "ORDER", "Ordine"
 

@@ -78,6 +78,7 @@ class GiftList(UUIDTimeStampedModel):
     )
     cancellation_reason = models.CharField(max_length=255, blank=True)
     notes = models.TextField(blank=True)
+    notifications_enabled = models.BooleanField(default=False)
 
     class Meta:
         ordering = ("-created_at",)

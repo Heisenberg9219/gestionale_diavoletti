@@ -21,6 +21,7 @@ media/
 
 # React / Node
 node_modules/
+.npm-cache/
 dist/
 .vite/
 coverage/
@@ -39,3 +40,4 @@ Thumbs.db
 
 # Local database and Docker data
 postgres-data/
+infrastructure/backups/

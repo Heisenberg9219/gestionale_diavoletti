@@ -1,0 +1,35 @@
+.cash-open-card .open-session-form button,
+.cash-open-card .register-create-form button {
+  height: 45px;
+  align-self: end;
+  justify-content: center;
+}
+
+.cash-open-card .register-create-form {
+  grid-template-columns: minmax(140px, .65fr) minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  align-items: end;
+}
+
+.cash-open-card .register-create-form label,
+.cash-open-card .register-create-form input,
+.cash-open-card .register-create-form select {
+  min-width: 0;
+  width: 100%;
+}
+
+.cash-open-card .open-session-form {
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 180px) auto;
+  gap: 16px;
+  align-items: end;
+}
+
+.cash-open-card .open-session-form label,
+.cash-open-card .open-session-form input,
+.cash-open-card .open-session-form select {
+  min-width: 0;
+  width: 100%;
+}
+
+@media (max-width: 760px) {
+  .cash-open-card .register-create-form { grid-template-columns: 1fr; }
+}

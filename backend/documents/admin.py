@@ -3,6 +3,7 @@ from django.contrib import admin
 from .models import (
     BusinessDocument,
     DocumentAttachment,
+    DocumentOcrAnalysis,
     DocumentNumberSequence,
     DocumentStatusChange,
     DocumentType,
@@ -66,6 +67,20 @@ class BusinessDocumentAdmin(admin.ModelAdmin):
 class DocumentAttachmentAdmin(admin.ModelAdmin):
     list_display = ("document", "original_name", "uploaded_by", "created_at")
     search_fields = ("document__number", "document__title", "original_name")
+
+
+@admin.register(DocumentOcrAnalysis)
+class DocumentOcrAnalysisAdmin(admin.ModelAdmin):
+    list_display = ("attachment", "provider", "model_id", "status", "analyzed_at")
+    list_filter = ("provider", "status")
+    search_fields = ("attachment__original_name", "attachment__document__number")
+    readonly_fields = tuple(field.name for field in DocumentOcrAnalysis._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(DocumentNumberSequence)

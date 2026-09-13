@@ -65,6 +65,7 @@ class Expense(UUIDTimeStampedModel):
     document_number = models.CharField(max_length=120, blank=True)
     document_date = models.DateField()
     due_date = models.DateField(null=True, blank=True)
+    notifications_enabled = models.BooleanField(default=False)
     taxable_amount = models.DecimalField(max_digits=14, decimal_places=2)
     tax_amount = models.DecimalField(max_digits=14, decimal_places=2)
     total_amount = models.DecimalField(max_digits=14, decimal_places=2)

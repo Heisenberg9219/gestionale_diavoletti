@@ -206,6 +206,12 @@ class Product(UUIDTimeStampedModel):
 
     class Meta:
         ordering = ("name",)
+        indexes = [
+            models.Index(
+                fields=("is_active", "name"),
+                name="catalog_product_active_name_idx",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.code} - {self.name}"  
@@ -286,4 +292,4 @@ class ProductBarcode(UUIDTimeStampedModel):
         ]
 
     def __str__(self):
-        return self.code    
+        return self.code

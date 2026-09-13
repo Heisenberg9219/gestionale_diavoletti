@@ -4,10 +4,16 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
+from unittest.mock import patch
 
-from .models import BusinessDocument, DocumentType
-from .services import cancel_document, finalize_document
+from .models import BusinessDocument, DocumentAttachment, DocumentOcrAnalysis, DocumentType
+from .services import (
+    analyze_invoice_attachment_with_azure,
+    cancel_document,
+    finalize_document,
+)
 
 
 class DocumentServiceTests(TestCase):
@@ -144,3 +150,79 @@ class DocumentServiceTests(TestCase):
         )
         with self.assertRaises(ValidationError):
             document_type.full_clean()
+
+
+class AzureInvoiceOcrTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = get_user_model().objects.create_user(
+            email="ocr-test@example.com",
+            password="test-password",
+        )
+        cls.document_type = DocumentType.objects.create(
+            code="OCR_INVOICE",
+            name="Fattura OCR",
+            direction=DocumentType.Direction.INCOMING,
+        )
+
+    def setUp(self):
+        self.document = BusinessDocument.objects.create(
+            document_type=self.document_type,
+            direction=DocumentType.Direction.INCOMING,
+            document_date=date(2026, 9, 1),
+            title="Fattura da analizzare",
+            taxable_amount="0.00",
+            tax_amount="0.00",
+            total_amount="0.00",
+            created_by=self.user,
+        )
+        self.attachment = DocumentAttachment.objects.create(
+            document=self.document,
+            original_name="fattura.pdf",
+            file=SimpleUploadedFile("fattura.pdf", b"%PDF-1.4 test"),
+            uploaded_by=self.user,
+        )
+
+    @patch("documents.services._analyze_with_azure")
+    def test_successful_analysis_stores_editable_proposal(self, analyze):
+        class Field:
+            def __init__(self, value, confidence=0.99):
+                self.value = value
+                self.confidence = confidence
+
+        class Result:
+            def __init__(self):
+                self.documents = [type("Document", (), {"fields": {
+                    "VendorName": Field("Fornitore S.r.l."),
+                    "InvoiceId": Field("FT-2026-10"),
+                    "InvoiceDate": Field(date(2026, 9, 1)),
+                    "SubTotal": Field("100.00"),
+                    "TotalTax": Field("22.00"),
+                    "InvoiceTotal": Field("122.00"),
+                    "Items": Field([]),
+                }})()]
+
+            def as_dict(self):
+                return {"status": "succeeded"}
+
+        analyze.return_value = Result()
+
+        analysis = analyze_invoice_attachment_with_azure(
+            attachment=self.attachment,
+            requested_by=self.user,
+        )
+
+        self.assertEqual(analysis.status, DocumentOcrAnalysis.Status.SUCCEEDED)
+        self.assertEqual(analysis.proposed_data["invoice_number"], "FT-2026-10")
+        self.assertEqual(analysis.proposed_data["total_amount"], "122.00")
+        self.assertEqual(analysis.provider_response, {"status": "succeeded"})
+
+    @patch("documents.services._analyze_with_azure", side_effect=RuntimeError("Azure non raggiungibile"))
+    def test_failed_analysis_is_traced(self, analyze):
+        analysis = analyze_invoice_attachment_with_azure(
+            attachment=self.attachment,
+            requested_by=self.user,
+        )
+
+        self.assertEqual(analysis.status, DocumentOcrAnalysis.Status.FAILED)
+        self.assertIn("non raggiungibile", analysis.error_message)

@@ -21,6 +21,12 @@ class StockBalance(UUIDTimeStampedModel):
 
     class Meta:
         ordering = ("location", "variant")
+        indexes = [
+            models.Index(
+                fields=("location", "quantity_on_hand"),
+                name="inventory_stock_loc_qty_idx",
+            ),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=("variant", "location"),
@@ -232,6 +238,11 @@ class InventoryCountSession(UUIDTimeStampedModel):
     )
     variants = models.ManyToManyField(
         "catalog.ProductVariant",
+        blank=True,
+        related_name="inventory_count_sessions",
+    )
+    suppliers = models.ManyToManyField(
+        "suppliers.Supplier",
         blank=True,
         related_name="inventory_count_sessions",
     )
