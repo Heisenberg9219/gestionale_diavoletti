@@ -1,0 +1,72 @@
+name: Build and deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Ambiente da pubblicare. Seleziona lo stesso ambiente del branch scelto.
+        required: true
+        type: choice
+        options:
+          - development
+          - production
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: >-
+      (inputs.environment == 'development' && github.ref_name == 'dev') ||
+      (inputs.environment == 'production' && github.ref_name == 'prod')
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+      POSTGRES_DB: ${{ vars.POSTGRES_DB }}
+      POSTGRES_USER: ${{ vars.POSTGRES_USER }}
+      POSTGRES_HOST: ${{ vars.POSTGRES_HOST }}
+      POSTGRES_PORT: ${{ vars.POSTGRES_PORT }}
+      DJANGO_DEBUG: ${{ vars.DJANGO_DEBUG }}
+      DJANGO_ALLOWED_HOSTS: ${{ vars.DJANGO_ALLOWED_HOSTS }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      DJANGO_SECRET_KEY: ${{ secrets.DJANGO_SECRET_KEY }}
+      DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+      DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+
+    steps:
+      - name: Verifica il branch scelto
+        run: |
+          echo "Deploy manuale di $GITHUB_REF_NAME su ${{ inputs.environment }}"
+
+      - name: Configura l'accesso SSH
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Aggiorna e pubblica sul server
+        run: |
+          cat <<REMOTE | ssh -o PubkeyAuthentication=unbound -o IdentitiesOnly=yes "$DEPLOY_USER@$DEPLOY_HOST" bash -se
+          set -eu
+          cd "$DEPLOY_PATH"
+          git fetch origin "$GITHUB_REF_NAME"
+          git checkout -B "$GITHUB_REF_NAME" "origin/$GITHUB_REF_NAME"
+          umask 077
+          cat > .env <<ENVIRONMENT
+          POSTGRES_DB=$POSTGRES_DB
+          POSTGRES_USER=$POSTGRES_USER
+          POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+          POSTGRES_HOST=$POSTGRES_HOST
+          POSTGRES_PORT=$POSTGRES_PORT
+          DJANGO_SECRET_KEY=$DJANGO_SECRET_KEY
+          DJANGO_DEBUG=$DJANGO_DEBUG
+          DJANGO_ALLOWED_HOSTS=$DJANGO_ALLOWED_HOSTS
+          ENVIRONMENT
+          docker compose --env-file .env -f infrastructure/compose.server.yml up -d --build
+          docker compose --env-file .env -f infrastructure/compose.server.yml exec -T backend python manage.py migrate
+          docker compose --env-file .env -f infrastructure/compose.server.yml exec -T backend python manage.py collectstatic --noinput
+          REMOTE
