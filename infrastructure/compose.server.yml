@@ -51,11 +51,24 @@ services:
       - backend
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - static_data:/var/www/static:ro
       - media_data:/var/www/media:ro
+      - certbot_data:/etc/letsencrypt:ro
+      - certbot_webroot:/var/www/certbot:ro
+
+  certbot:
+    image: certbot/certbot:v2.11.0
+    profiles:
+      - certbot
+    volumes:
+      - certbot_data:/etc/letsencrypt
+      - certbot_webroot:/var/www/certbot
 
 volumes:
   postgres_data:
   static_data:
   media_data:
+  certbot_data:
+  certbot_webroot:

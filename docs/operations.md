@@ -14,6 +14,22 @@ Il job genera un backup ogni notte alle 02:00 e rimuove automaticamente quelli o
 
 Prima della pubblicazione configurare anche una copia esterna cifrata dei backup. Conservare soltanto i backup sullo stesso server protegge dagli errori applicativi, ma non dalla perdita completa della macchina.
 
+## HTTPS e rinnovo certificati
+
+Dopo che `APP_DOMAIN` punta al VPS e il deploy ha completato l'avvio bootstrap HTTP, creare il certificato Let’s Encrypt con:
+
+```bash
+cd /srv/diavoletti
+docker compose --env-file .env -f infrastructure/compose.server.yml run --rm certbot certonly --webroot -w /var/www/certbot --email amministrazione@example.it --agree-tos --no-eff-email -d "$APP_DOMAIN"
+docker compose --env-file .env -f infrastructure/compose.server.yml up -d --force-recreate frontend
+```
+
+Aprire la porta TCP 443 nel firewall dopo l'emissione e configurare il rinnovo automatico nel crontab dell'utente `deploy`:
+
+```cron
+15 3 * * * /bin/sh /srv/diavoletti/infrastructure/scripts/renew_certificates.sh >> /srv/diavoletti/logs/certificates.log 2>&1
+```
+
 ## Server consigliato
 
 Per il gestionale iniziale usare un VPS europeo con Ubuntu 24.04 LTS, Docker e almeno 4 vCPU, 8 GB di RAM e 80 GB NVMe. Questa configurazione ospita PostgreSQL, backend, frontend, reverse proxy, Redis e il processo programmato delle notifiche senza sovradimensionare l'infrastruttura.
