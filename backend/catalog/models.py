@@ -209,7 +209,7 @@ class Product(UUIDTimeStampedModel):
         indexes = [
             models.Index(
                 fields=("is_active", "name"),
-                name="catalog_product_active_name_idx",
+                name="catalog_prod_active_name_idx",
             ),
         ]
 
