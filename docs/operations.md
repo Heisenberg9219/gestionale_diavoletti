@@ -4,10 +4,10 @@
 
 Lo script `infrastructure/scripts/backup_postgres.py` crea un dump PostgreSQL in formato custom e conserva gli ultimi sette file. I dump sono archiviati in `infrastructure/backups/`, esclusa da Git.
 
-Sul server, eseguire il processo con un utente autorizzato a usare Docker. Per esempio, dopo aver clonato il progetto in `/srv/diavoletti`, aggiungere al crontab:
+Sul server, eseguire il processo con l'utente `deploy`, autorizzato a usare Docker. Dopo il primo deploy creare la directory dei log e aggiungere al crontab:
 
 ```cron
-0 2 * * * cd /srv/diavoletti && /usr/bin/python3 infrastructure/scripts/backup_postgres.py >> /var/log/diavoletti-backup.log 2>&1
+0 2 * * * cd /srv/diavoletti && COMPOSE_FILE=/srv/diavoletti/infrastructure/compose.server.yml COMPOSE_ENV_FILE=/srv/diavoletti/.env BACKUP_DIR=/srv/diavoletti/infrastructure/backups /usr/bin/python3 infrastructure/scripts/backup_postgres.py >> /srv/diavoletti/logs/backup.log 2>&1
 ```
 
 Il job genera un backup ogni notte alle 02:00 e rimuove automaticamente quelli oltre il settimo. Per utilizzare un disco o un mount diverso impostare `BACKUP_DIR`; per modificare la rotazione impostare `BACKUP_RETENTION_COUNT`.
