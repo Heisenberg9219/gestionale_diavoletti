@@ -30,6 +30,16 @@ Aprire la porta TCP 443 nel firewall dopo l'emissione e configurare il rinnovo a
 15 3 * * * /bin/sh /srv/diavoletti/infrastructure/scripts/renew_certificates.sh >> /srv/diavoletti/logs/certificates.log 2>&1
 ```
 
+## OCR delle fatture
+
+L'analisi OCR usa Azure AI Document Intelligence con il modello `prebuilt-invoice`.
+Nel repository GitHub, per ciascun ambiente, configurare:
+
+- variabile `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT`: endpoint della risorsa Azure, ad esempio `https://nome-risorsa.cognitiveservices.azure.com/`;
+- secret `AZURE_DOCUMENT_INTELLIGENCE_KEY`: una delle chiavi della stessa risorsa.
+
+La pipeline scrive entrambi i valori nel file `.env` del server durante il deploy. Non inserire la chiave nel repository o direttamente nel file versionato.
+
 ## Server consigliato
 
 Per il gestionale iniziale usare un VPS europeo con Ubuntu 24.04 LTS, Docker e almeno 4 vCPU, 8 GB di RAM e 80 GB NVMe. Questa configurazione ospita PostgreSQL, backend, frontend, reverse proxy, Redis e il processo programmato delle notifiche senza sovradimensionare l'infrastruttura.

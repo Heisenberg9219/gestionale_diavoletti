@@ -33,8 +33,10 @@ jobs:
       DJANGO_ALLOWED_HOSTS: ${{ vars.DJANGO_ALLOWED_HOSTS }}
       DJANGO_COOKIE_SECURE: ${{ vars.DJANGO_COOKIE_SECURE }}
       APP_DOMAIN: ${{ vars.APP_DOMAIN }}
+      AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT: ${{ vars.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
       DJANGO_SECRET_KEY: ${{ secrets.DJANGO_SECRET_KEY }}
+      AZURE_DOCUMENT_INTELLIGENCE_KEY: ${{ secrets.AZURE_DOCUMENT_INTELLIGENCE_KEY }}
       DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
       DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
 
@@ -69,6 +71,8 @@ jobs:
           DJANGO_ALLOWED_HOSTS=$DJANGO_ALLOWED_HOSTS
           DJANGO_COOKIE_SECURE=$DJANGO_COOKIE_SECURE
           APP_DOMAIN=$APP_DOMAIN
+          AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT=$AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT
+          AZURE_DOCUMENT_INTELLIGENCE_KEY=$AZURE_DOCUMENT_INTELLIGENCE_KEY
           ENVIRONMENT
           docker compose --env-file .env -f infrastructure/compose.server.yml up -d --build
           docker compose --env-file .env -f infrastructure/compose.server.yml exec -T backend python manage.py migrate

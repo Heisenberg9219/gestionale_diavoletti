@@ -301,8 +301,12 @@ def document_attachment_viewset(base):
             requested_by=request.user,
         )
         from .factories import serializer_for
-        http_status = 201 if analysis.status == "SUCCEEDED" else 422
-        return Response(serializer_for(type(analysis))(analysis).data, status=http_status)
+        if analysis.status != "SUCCEEDED":
+            return Response(
+                {"detail": analysis.error_message or "L'analisi OCR non è stata completata."},
+                status=422,
+            )
+        return Response(serializer_for(type(analysis))(analysis).data, status=201)
 
     base.analyze_invoice = analyze_invoice
     return base
