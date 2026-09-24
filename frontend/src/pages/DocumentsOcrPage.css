@@ -180,6 +180,11 @@
   font-weight: 800;
 }
 
+/* The fifth summary field is the configurable VAT rate. */
+.ocr-review-summary label:nth-child(5) { font-size: 0; }
+.ocr-review-summary label:nth-child(5)::before { content: "IVA %"; font-size: 11px; }
+.ocr-review-summary label:nth-child(5) input { font-size: 14px; }
+
 .ocr-review-summary input,
 .ocr-review-line input,
 .ocr-review-line select {

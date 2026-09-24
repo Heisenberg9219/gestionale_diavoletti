@@ -26,7 +26,7 @@ function makeReview(analysis) {
     invoice_number: saved.invoice_number ?? proposal.invoice_number ?? "",
     invoice_date: saved.invoice_date ?? proposal.invoice_date ?? "",
     taxable_amount: saved.taxable_amount ?? proposal.taxable_amount ?? "",
-    tax_amount: saved.tax_amount ?? proposal.tax_amount ?? "",
+    tax_amount: saved.tax_rate ?? "22",
     total_amount: saved.total_amount ?? proposal.total_amount ?? "",
     items: (proposal.items || []).map((item, index) => ({
       accepted: saved.items?.[index]?.accepted ?? true,
@@ -53,12 +53,13 @@ export default function DocumentsOcrPage() {
   const updateReview = (key, value) => setReview((current) => ({ ...current, [key]: value }));
   const updateItem = (index, key, value) => setReview((current) => ({ ...current, items: current.items.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: value } : item) }));
   const reviewSubtotal = review?.items.filter((item) => item.accepted).reduce((total, item) => total + lineTotal(item), 0) || 0;
-  const reviewTotal = reviewSubtotal + amount(review?.tax_amount);
+  const reviewTax = reviewSubtotal * amount(review?.tax_amount) / 100;
+  const reviewTotal = reviewSubtotal + reviewTax;
 
   async function upload(event) { event.preventDefault(); if (!form.file) return notice("Seleziona un PDF da allegare.", false); setSaving(true); try { const type = typeFor(form.document_type); const document = await request("/documents/documents/", { method: "POST", body: JSON.stringify({ document_type: form.document_type, direction: type.direction, status: "DRAFT", number: form.number, document_date: form.document_date, title: form.title, taxable_amount: "0.00", tax_amount: "0.00", total_amount: "0.00", counterparty_name: form.counterparty_name }) }); const data = new FormData(); data.append("file", form.file); data.append("description", "Documento caricato per analisi OCR"); await request(`/documents/documents/${document.id}/upload-attachment/`, { method: "POST", body: data }); setFormOpen(false); setForm(blank()); notice("Documento e PDF caricati. Avvia l'OCR per preparare la proposta."); await load(); } catch (error) { notice(error.message, false); } finally { setSaving(false); } }
   async function analyze(attachment) { try { await request(`/documents/attachments/${attachment.id}/analyze-invoice/`, { method: "POST", body: JSON.stringify({}) }); notice("Analisi OCR completata. Apri la proposta per controllare gli articoli."); await load(); } catch (error) { notice(error.message, false); await load(); } }
   async function finalize(document) { try { await request(`/documents/documents/${document.id}/finalize/`, { method: "POST", body: JSON.stringify({ number: document.number }) }); notice("Documento registrato correttamente."); await load(); } catch (error) { notice(error.message, false); } }
-  async function saveReview() { setReviewSaving(true); try { const normalizedReview = { ...review, taxable_amount: money(reviewSubtotal), total_amount: money(reviewTotal), items: review.items.map((item) => ({ ...item, amount: money(lineTotal(item)) })) }; await request(`/documents/ocr-analyses/${reviewAnalysis.id}/`, { method: "PATCH", body: JSON.stringify({ proposed_data: { ...reviewAnalysis.proposed_data, review: { ...normalizedReview, status: "CONFIRMED", confirmed_at: new Date().toISOString() } } }) }); closeReview(); notice("Proposta confermata e salvata. Il magazzino non e' stato modificato."); await load(); } catch (error) { notice(error.message, false); } finally { setReviewSaving(false); } }
+  async function saveReview() { setReviewSaving(true); try { const normalizedReview = { ...review, tax_rate: review.tax_amount, taxable_amount: money(reviewSubtotal), tax_amount: money(reviewTax), total_amount: money(reviewTotal), items: review.items.map((item) => ({ ...item, amount: money(lineTotal(item)) })) }; await request(`/documents/ocr-analyses/${reviewAnalysis.id}/`, { method: "PATCH", body: JSON.stringify({ proposed_data: { ...reviewAnalysis.proposed_data, review: { ...normalizedReview, status: "CONFIRMED", confirmed_at: new Date().toISOString() } } }) }); closeReview(); notice("Proposta confermata e salvata. Il magazzino non e' stato modificato."); await load(); } catch (error) { notice(error.message, false); } finally { setReviewSaving(false); } }
 
   return <section className="products-page documents-page">
     <div className="page-title-row"><div><p className="eyebrow">Gestione</p><h2>Documenti e OCR</h2><span>Carica fatture e documenti PDF, poi verifica gli articoli rilevati.</span></div><button className="primary-action" onClick={() => { setForm(blank()); setFormOpen(true); }}><Plus size={17} /> Carica documento</button></div>
