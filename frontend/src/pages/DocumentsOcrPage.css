@@ -1,0 +1,14 @@
+.document-file-control {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.document-file-control button {
+  flex: 0 0 auto;
+}
+
+.document-file-control > span {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+}

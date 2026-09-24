@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, FileText, FileUp, Plus, ScanText, Search } from "lucide-react";
 import { request } from "../api";
 import "../products.css";
+import "./DocumentsOcrPage.css";
 
 const list = (data) => data?.results || data || [];
 const today = () => new Date().toISOString().slice(0, 10);

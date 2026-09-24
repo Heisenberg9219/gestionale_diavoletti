@@ -1,6 +1,8 @@
 from django.contrib.auth.models import Group
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient, APIRequestFactory
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from api.permissions import IsOwnerOrClerk
 
@@ -74,6 +76,26 @@ class AuthenticationApiTests(TestCase):
         )
         logged_out = self.client.post("/api/v1/auth/logout/")
         self.assertEqual(logged_out.status_code, 204)
+
+    def test_refresh_keeps_the_original_absolute_session_expiry(self):
+        self.login()
+        old_refresh = RefreshToken(self.client.cookies["diavoletti_refresh"].value)
+        original_expiry = old_refresh["session_expires_at"]
+
+        refreshed = self.client.post("/api/v1/auth/refresh/")
+
+        self.assertEqual(refreshed.status_code, 200)
+        new_refresh = RefreshToken(self.client.cookies["diavoletti_refresh"].value)
+        self.assertEqual(new_refresh["session_expires_at"], original_expiry)
+
+    def test_refresh_rejects_an_expired_absolute_session(self):
+        expired_refresh = RefreshToken.for_user(self.owner)
+        expired_refresh["session_expires_at"] = int(timezone.now().timestamp()) - 1
+        self.client.cookies["diavoletti_refresh"] = str(expired_refresh)
+
+        response = self.client.post("/api/v1/auth/refresh/")
+
+        self.assertEqual(response.status_code, 401)
 
     def test_existing_access_token_stops_working_when_user_is_blocked(self):
         login = self.login()

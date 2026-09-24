@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
+from django.utils import timezone
 
 from .models import UserPagePermission
 from .serializers import CurrentUserSerializer, LoginSerializer, ManagedUserSerializer
@@ -16,10 +17,14 @@ from rest_framework import serializers
 
 
 def _set_refresh_cookie(response, refresh):
+    seconds_until_session_expiry = int(refresh["session_expires_at"] - timezone.now().timestamp())
     response.set_cookie(
         settings.AUTH_REFRESH_COOKIE_NAME,
         str(refresh),
-        max_age=int(settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"].total_seconds()),
+        max_age=min(
+            seconds_until_session_expiry,
+            int(settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"].total_seconds()),
+        ),
         httponly=True,
         secure=settings.AUTH_REFRESH_COOKIE_SECURE,
         samesite=settings.AUTH_REFRESH_COOKIE_SAMESITE,
@@ -33,6 +38,14 @@ def _delete_refresh_cookie(response):
         path="/api/v1/auth/",
         samesite=settings.AUTH_REFRESH_COOKIE_SAMESITE,
     )
+
+
+def _create_refresh_token(user, *, session_expires_at=None):
+    refresh = RefreshToken.for_user(user)
+    refresh["session_expires_at"] = session_expires_at or int(
+        (timezone.now() + settings.AUTH_SESSION_MAX_LIFETIME).timestamp()
+    )
+    return refresh
 
 
 class LoginView(APIView):
@@ -53,7 +66,7 @@ class LoginView(APIView):
                 {"detail": "Email o password non valide."},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
-        refresh = RefreshToken.for_user(user)
+        refresh = _create_refresh_token(user)
         response = Response({
             "access": str(refresh.access_token),
             "user": CurrentUserSerializer(user).data,
@@ -76,8 +89,14 @@ class RefreshView(APIView):
             user = get_user_model().objects.get(pk=old_refresh["user_id"])
             if not user.is_active or user.status != user.Status.ACTIVE:
                 raise get_user_model().DoesNotExist
+            session_expires_at = old_refresh.get("session_expires_at")
+            if session_expires_at is not None and timezone.now().timestamp() >= session_expires_at:
+                raise TokenError("Sessione scaduta.")
             old_refresh.blacklist()
-            new_refresh = RefreshToken.for_user(user)
+            new_refresh = _create_refresh_token(
+                user,
+                session_expires_at=session_expires_at,
+            )
         except (TokenError, get_user_model().DoesNotExist, ValueError):
             response = Response({"detail": "Sessione non valida o scaduta."}, status=401)
             _delete_refresh_cookie(response)

@@ -2,6 +2,16 @@ const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1";
 
 let accessToken = sessionStorage.getItem("accessToken");
 
+function clearLocalSession() {
+  accessToken = null;
+  sessionStorage.removeItem("accessToken");
+}
+
+function notifySessionExpired() {
+  clearLocalSession();
+  window.dispatchEvent(new Event("auth:expired"));
+}
+
 export async function request(path, options = {}) {
   const headers = new Headers(options.headers);
   if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
@@ -14,6 +24,8 @@ export async function request(path, options = {}) {
       sessionStorage.setItem("accessToken", accessToken);
       headers.set("Authorization", `Bearer ${accessToken}`);
       response = await fetch(`${API_URL}${path}`, { ...options, headers, credentials: "include" });
+    } else {
+      notifySessionExpired();
     }
   }
   if (!response.ok) {
@@ -32,10 +44,9 @@ export async function login(email, password) {
 
 export async function logout() {
   try {
-    await request("/auth/logout/", { method: "POST" });
+    await fetch(`${API_URL}/auth/logout/`, { method: "POST", credentials: "include" });
   } finally {
-    accessToken = null;
-    sessionStorage.removeItem("accessToken");
+    clearLocalSession();
   }
 }
 
