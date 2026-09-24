@@ -65,6 +65,56 @@
   min-width: 0;
 }
 
+.document-heading,
+.document-row {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.25fr) 130px 125px 135px 115px 140px;
+  align-items: center;
+  gap: 18px;
+  padding: 15px 22px;
+}
+
+.document-heading {
+  color: #8b858a;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+
+.document-row { border-top: 1px solid #eeeaea; }
+.document-row > div { display: grid; gap: 4px; min-width: 0; }
+.document-row strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.document-row span { color: #817b80; font-size: 12px; }
+.document-status {
+  justify-self: start;
+  border-radius: 7px;
+  padding: 5px 8px;
+  background: #f1eff0;
+  color: #6f676c;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+}
+.document-status.registered,
+.document-status.issued { background: #edf9f1; color: #167444; }
+.document-status.cancelled { background: #fff0f2; color: #b00019; }
+.document-actions { display: flex !important; justify-content: flex-end; gap: 7px; }
+.document-actions button,
+.document-actions a {
+  display: grid;
+  width: 33px;
+  height: 33px;
+  place-items: center;
+  border: 1px solid #e2dddf;
+  border-radius: 7px;
+  background: #fff;
+  color: #4d464c;
+  cursor: pointer;
+}
+.document-actions button:hover,
+.document-actions a:hover { border-color: #ed001b; color: #b70018; }
+
 .ocr-review-layer {
   position: fixed;
   z-index: 20;
@@ -178,6 +228,11 @@
 @media (max-width: 800px) {
   .document-form { grid-template-columns: 1fr 1fr; }
   .document-copy { grid-column: 1 / -1; grid-row: auto; }
+  .document-heading { display: none; }
+  .document-row { grid-template-columns: 1fr auto; padding: 16px; }
+  .document-row > span { display: none; }
+  .document-status { grid-column: 2; grid-row: 1; }
+  .document-actions { grid-column: 1; grid-row: 2; justify-content: flex-start; }
   .ocr-review-layer { padding: 10px; }
   .ocr-review-summary { grid-template-columns: 1fr 1fr; padding: 0 16px 16px; }
   .ocr-review-heading { display: none; }
