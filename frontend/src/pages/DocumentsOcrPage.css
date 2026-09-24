@@ -198,7 +198,7 @@
 .ocr-review-heading,
 .ocr-review-line {
   display: grid;
-  grid-template-columns: 46px minmax(160px, 1.5fr) minmax(180px, 1.5fr) 72px 98px 98px;
+  grid-template-columns: 58px minmax(160px, 1.5fr) minmax(180px, 1.5fr) 72px 98px 98px;
   align-items: center;
   gap: 9px;
   padding: 11px 26px;
@@ -214,6 +214,20 @@
 
 .ocr-review-line { border-top: 1px solid #eeeaea; }
 .ocr-review-line > label { display: grid; place-items: center; }
+.ocr-review-line > label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #ed001b;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
 .ocr-review-line.is-discarded { opacity: .45; }
 .ocr-review-empty { padding: 22px 26px; color: #817b80; }
 
