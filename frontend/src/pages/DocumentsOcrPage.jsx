@@ -38,7 +38,7 @@ function makeReview(analysis, markup) {
       quantity: saved.items?.[index]?.quantity ?? item.quantity ?? "",
       unit_price: saved.items?.[index]?.unit_price ?? item.unit_price ?? "",
       amount: saved.items?.[index]?.amount ?? item.amount ?? "",
-      new_variant: (() => { const stored = saved.items?.[index]?.new_variant || {}; return { product_id: "", product_name: item.description ?? "", category_id: "", color_id: "", ...stored, variants: stored.variants || [{ size_id: stored.size_id || "", sku: stored.sku || defaultSku(index, 0), barcode: stored.barcode || "", quantity: item.quantity ?? "", sale_price: stored.sale_price || money(amount(item.unit_price) * amount(markup)) }] }; })(),
+      new_variant: (() => { const stored = saved.items?.[index]?.new_variant || {}; const defaultSalePrice = money(amount(item.unit_price) * amount(markup)); const storedVariants = stored.variants || [{ size_id: stored.size_id || "", sku: stored.sku || defaultSku(index, 0), barcode: stored.barcode || "", quantity: item.quantity ?? "", sale_price: stored.sale_price || "" }]; return { product_id: "", product_name: item.description ?? "", category_id: "", color_id: "", ...stored, variants: storedVariants.map((variant, variantIndex) => ({ ...variant, sku: variant.sku || defaultSku(index, variantIndex), sale_price: variant.sale_price || defaultSalePrice })) }; })(),
     })),
   };
 }
