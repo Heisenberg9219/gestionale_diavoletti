@@ -190,10 +190,10 @@
   font-weight: 800;
 }
 
-/* The fifth summary field is the configurable VAT rate. */
-.ocr-review-summary label:nth-child(5) { font-size: 0; }
-.ocr-review-summary label:nth-child(5)::before { content: "IVA %"; font-size: 11px; }
-.ocr-review-summary label:nth-child(5) input { font-size: 14px; }
+/* The seventh summary field is the configurable VAT rate. */
+.ocr-review-summary label:nth-child(7) { font-size: 0; }
+.ocr-review-summary label:nth-child(7)::before { content: "IVA %"; font-size: 11px; }
+.ocr-review-summary label:nth-child(7) input { font-size: 14px; }
 
 .ocr-review-summary input,
 .ocr-review-summary select,
@@ -257,6 +257,17 @@
 }
 .ocr-new-variant label { display: grid; gap: 5px; color: #4d464c; font-size: 10px; font-weight: 800; }
 
+.ocr-variant-sizes {
+  grid-column: 1 / -1;
+  border-top: 1px solid #eeeaea;
+  padding-top: 10px;
+}
+.ocr-variant-sizes-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: #4d464c; font-size: 11px; }
+.ocr-variant-sizes-heading button { display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent; color: #b70018; font: inherit; font-weight: 800; cursor: pointer; }
+.ocr-variant-size-row { display: grid; grid-template-columns: 1.2fr .55fr 1fr 1.25fr 1fr 30px; gap: 9px; align-items: end; margin-top: 8px; }
+.ocr-remove-size { height: 38px; border: 1px solid #e2dddf; border-radius: 6px; background: #fff; color: #b70018; font-size: 20px; cursor: pointer; }
+.ocr-remove-size:disabled { opacity: .35; cursor: not-allowed; }
+
 .ocr-review-modal footer {
   align-items: center;
   border-top: 1px solid #eeeaea;
@@ -278,6 +289,7 @@
   .ocr-review-heading { display: none; }
   .ocr-review-line { grid-template-columns: 30px 1fr 1fr; padding: 14px 16px; }
   .ocr-new-variant { grid-template-columns: 1fr 1fr; padding: 0 16px 14px 46px; }
+  .ocr-variant-size-row { grid-template-columns: 1fr 1fr; }
   .ocr-review-line input:nth-of-type(n+2) { grid-column: span 1; }
   .ocr-review-modal header,
   .ocr-review-modal footer { padding: 18px 16px; align-items: flex-start; flex-direction: column; }

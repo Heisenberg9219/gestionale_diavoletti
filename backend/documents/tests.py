@@ -275,3 +275,29 @@ class OcrPurchaseRegistrationTests(TestCase):
         self.analysis.refresh_from_db()
         self.assertEqual(self.analysis.proposed_data["review"]["status"], "DRAFT")
         self.assertEqual(self.analysis.proposed_data["review"]["items"][0]["description"], "Da associare")
+
+    def test_new_product_can_split_the_ocr_quantity_across_sizes(self):
+        from catalog.models import ProductBarcode, Size
+        from inventory.models import StockBalance
+        from pricing.models import VariantSalePrice
+
+        other_size = Size.objects.create(
+            size_scale=self.variant.size.size_scale, code="M", label="M",
+        )
+        apply_ocr_purchase_proposal(
+            analysis=self.analysis, applied_by=self.user, location_id=self.location.pk,
+            review={"supplier_name": "Fornitore OCR", "invoice_number": "FT-TAGLIE", "invoice_date": "2026-09-01", "tax_rate": "22", "items": [{
+                "accepted": True, "description": "Nuovo articolo", "variant_id": "",
+                "quantity": "3", "unit_price": "10.00", "new_variant": {
+                    "product_name": "Nuovo articolo", "category_id": str(self.variant.product.category_id),
+                    "color_id": "", "variants": [
+                        {"sku": "OCR-S", "barcode": "1234567890123", "size_id": str(self.variant.size_id), "quantity": "1", "sale_price": "19.90"},
+                        {"sku": "OCR-M", "size_id": str(other_size.pk), "quantity": "2", "sale_price": "19.90"},
+                    ],
+                },
+            }]},
+        )
+        self.assertEqual(StockBalance.objects.get(variant__sku="OCR-S", location=self.location).quantity_on_hand, 1)
+        self.assertEqual(StockBalance.objects.get(variant__sku="OCR-M", location=self.location).quantity_on_hand, 2)
+        self.assertEqual(VariantSalePrice.objects.filter(variant__sku__in=("OCR-S", "OCR-M"), amount="19.90").count(), 2)
+        self.assertTrue(ProductBarcode.objects.filter(variant__sku="OCR-S", code="1234567890123").exists())

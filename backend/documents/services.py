@@ -219,45 +219,77 @@ def _proposal_supplier(*, supplier_id, supplier_name, vat_number):
     )
 
 
-def _proposal_variant(*, item, user):
+def _proposal_product(*, item, new_variant):
     from catalog.models import Product, ProductVariant
     from core.models import TaxRate
 
+    product_id = new_variant.get("product_id")
+    if product_id:
+        return Product.objects.get(pk=product_id, is_active=True)
+    product_name = str(new_variant.get("product_name") or item.get("description") or "").strip()
+    category_id = new_variant.get("category_id")
+    if not product_name or not category_id:
+        raise ValidationError("Per un nuovo prodotto indicare nome e categoria.")
+    tax_rate = TaxRate.objects.filter(is_active=True, is_default=True).first()
+    if tax_rate is None:
+        tax_rate = TaxRate.objects.filter(is_active=True).order_by("pk").first()
+    if tax_rate is None:
+        raise ValidationError("Configurare un'aliquota IVA attiva prima di creare un articolo.")
+    return Product.objects.create(
+        code=_new_code("OCR-PRD", uuid4()), name=product_name,
+        category_id=category_id, tax_rate=tax_rate,
+    )
+
+
+def _proposal_variants(*, item, user):
+    from catalog.models import ProductBarcode, ProductVariant
+    from pricing.models import VariantSalePrice
+
     variant_id = item.get("variant_id")
     if variant_id:
-        return ProductVariant.objects.select_for_update().get(pk=variant_id, is_active=True)
-
+        return [(ProductVariant.objects.select_for_update().get(pk=variant_id, is_active=True), _positive_quantity(item.get("quantity")))]
     new_variant = item.get("new_variant") or {}
     if not new_variant:
         description = str(item.get("description") or "questa riga").strip()
-        raise ValidationError(
-            f"Associare una variante esistente oppure creare l'articolo per: {description}."
+        raise ValidationError(f"Associare una variante esistente oppure creare l'articolo per: {description}.")
+    variants = new_variant.get("variants") or [{
+        "sku": new_variant.get("sku"), "size_id": new_variant.get("size_id"),
+        "quantity": item.get("quantity"), "sale_price": new_variant.get("sale_price"),
+        "barcode": new_variant.get("barcode"),
+    }]
+    product = _proposal_product(item=item, new_variant=new_variant)
+    result = []
+    for row in variants:
+        sku = str(row.get("sku") or _new_code("OCR-SKU", uuid4())).strip()
+        size_id = row.get("size_id")
+        quantity = _positive_quantity(row.get("quantity"))
+        try:
+            sale_price = Decimal(str(row.get("sale_price")))
+        except Exception as exc:
+            raise ValidationError("Il prezzo di vendita deve essere un numero valido.") from exc
+        if not sku or not size_id or sale_price <= 0:
+            raise ValidationError("Per ogni taglia indicare SKU, quantità e prezzo di vendita maggiore di zero.")
+        variant = ProductVariant.objects.create(
+            product=product, sku=sku, color_id=new_variant.get("color_id") or None,
+            size_id=size_id,
         )
-    sku = str(new_variant.get("sku") or "").strip()
-    size_id = new_variant.get("size_id")
-    if not sku or not size_id:
-        raise ValidationError("Per un nuovo articolo indicare SKU e taglia.")
-    product_id = new_variant.get("product_id")
-    if product_id:
-        product = Product.objects.get(pk=product_id, is_active=True)
-    else:
-        product_name = str(new_variant.get("product_name") or item.get("description") or "").strip()
-        category_id = new_variant.get("category_id")
-        tax_rate_id = new_variant.get("tax_rate_id")
-        if not product_name or not category_id or not tax_rate_id:
-            raise ValidationError("Per un nuovo prodotto indicare nome, categoria e IVA.")
-        product = Product.objects.create(
-            code=_new_code("OCR-PRD", uuid4()),
-            name=product_name,
-            category_id=category_id,
-            tax_rate=TaxRate.objects.get(pk=tax_rate_id, is_active=True),
+        VariantSalePrice.objects.create(
+            variant=variant, amount=sale_price, source=VariantSalePrice.Source.MANUAL,
+            notes="Prezzo impostato dal pre-caricamento OCR.", created_by=user,
         )
-    return ProductVariant.objects.create(
-        product=product,
-        sku=sku,
-        color_id=new_variant.get("color_id") or None,
-        size_id=size_id,
-    )
+        barcode = str(row.get("barcode") or "").strip()
+        if barcode:
+            ProductBarcode.objects.create(
+                variant=variant, code=barcode,
+                barcode_type={8: ProductBarcode.Type.EAN8, 13: ProductBarcode.Type.EAN13}.get(len(barcode), ProductBarcode.Type.OTHER),
+                source=ProductBarcode.Source.MANUFACTURER,
+                is_primary=True,
+            )
+        result.append((variant, quantity))
+    total_quantity = sum((quantity for _, quantity in result), Decimal("0"))
+    if total_quantity != _positive_quantity(item.get("quantity")):
+        raise ValidationError("La somma delle quantità per taglia deve coincidere con la quantità della riga OCR.")
+    return result
 
 
 @transaction.atomic
@@ -329,15 +361,14 @@ def apply_ocr_purchase_proposal(*, analysis, review, supplier_id=None, location_
 
     prepared = []
     for item in items:
-        quantity = _positive_quantity(item.get("quantity"))
         try:
             unit_cost = Decimal(str(item.get("unit_price")))
         except Exception as exc:
             raise ValidationError("Il costo unitario deve essere un numero valido.") from exc
         if unit_cost < 0:
             raise ValidationError("Il costo unitario non può essere negativo.")
-        variant = _proposal_variant(item=item, user=applied_by)
-        prepared.append((item, variant, quantity, unit_cost))
+        for variant, quantity in _proposal_variants(item=item, user=applied_by):
+            prepared.append((item, variant, quantity, unit_cost))
 
     taxable_amount = sum((_money(quantity * cost) for _, _, quantity, cost in prepared), Decimal("0.00"))
     tax_rate = Decimal(str(review.get("tax_rate", review.get("tax_amount", "22"))))
