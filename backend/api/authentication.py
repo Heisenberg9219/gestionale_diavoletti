@@ -14,6 +14,9 @@ class ActiveUserJWTAuthentication(JWTAuthentication):
         session_expires_at = validated_token.get("session_expires_at")
         if session_expires_at is not None and timezone.now().timestamp() >= session_expires_at:
             raise AuthenticationFailed("Sessione scaduta. Accedi di nuovo.", code="session_expired")
+        idle_expires_at = validated_token.get("idle_expires_at")
+        if idle_expires_at is not None and timezone.now().timestamp() >= idle_expires_at:
+            raise AuthenticationFailed("Sessione scaduta per inattività. Accedi di nuovo.", code="session_idle_expired")
         user = super().get_user(validated_token)
         if not user.is_active or user.status != user.Status.ACTIVE:
             raise AuthenticationFailed("Account non attivo.", code="user_inactive")

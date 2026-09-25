@@ -196,6 +196,16 @@ def _new_code(prefix, value):
     return f"{prefix}-{value.hex[:12].upper()}"
 
 
+def _next_sku():
+    from catalog.models import SkuSequence
+
+    sequence, _ = SkuSequence.objects.get_or_create(key="GLOBAL")
+    sequence = SkuSequence.objects.select_for_update().get(pk=sequence.pk)
+    sequence.last_number += 1
+    sequence.save(update_fields=("last_number", "updated_at"))
+    return f"SKU-{sequence.last_number:06d}"
+
+
 def _proposal_supplier(*, supplier_id, supplier_name, vat_number):
     from suppliers.models import Supplier
 
@@ -260,7 +270,8 @@ def _proposal_variants(*, item, user):
     product = _proposal_product(item=item, new_variant=new_variant)
     result = []
     for row in variants:
-        sku = str(row.get("sku") or _new_code("OCR-SKU", uuid4())).strip()
+        suggested_sku = str(row.get("sku") or "").strip()
+        sku = _next_sku() if not suggested_sku or suggested_sku.startswith("OCR-") else suggested_sku
         size_id = row.get("size_id")
         quantity = _positive_quantity(row.get("quantity"))
         try:

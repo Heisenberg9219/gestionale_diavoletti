@@ -40,10 +40,13 @@ def _delete_refresh_cookie(response):
     )
 
 
-def _create_refresh_token(user, *, session_expires_at=None):
+def _create_refresh_token(user, *, session_expires_at=None, idle_expires_at=None):
     refresh = RefreshToken.for_user(user)
     refresh["session_expires_at"] = session_expires_at or int(
         (timezone.now() + settings.AUTH_SESSION_MAX_LIFETIME).timestamp()
+    )
+    refresh["idle_expires_at"] = idle_expires_at or int(
+        (timezone.now() + settings.AUTH_SESSION_IDLE_TIMEOUT).timestamp()
     )
     return refresh
 
@@ -92,6 +95,9 @@ class RefreshView(APIView):
             session_expires_at = old_refresh.get("session_expires_at")
             if session_expires_at is not None and timezone.now().timestamp() >= session_expires_at:
                 raise TokenError("Sessione scaduta.")
+            idle_expires_at = old_refresh.get("idle_expires_at")
+            if idle_expires_at is not None and timezone.now().timestamp() >= idle_expires_at:
+                raise TokenError("Sessione scaduta per inattività.")
             old_refresh.blacklist()
             new_refresh = _create_refresh_token(
                 user,

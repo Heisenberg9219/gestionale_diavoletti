@@ -252,6 +252,12 @@ class ProductVariant(UUIDTimeStampedModel):
     def __str__(self):
         return f"{self.sku} - {self.product.name}"
 
+
+class SkuSequence(UUIDTimeStampedModel):
+    """Singleton counter used to assign globally progressive internal SKUs."""
+    key = models.CharField(max_length=32, unique=True, default="GLOBAL")
+    last_number = models.PositiveIntegerField(default=0)
+
 class ProductBarcode(UUIDTimeStampedModel):
     class Type(models.TextChoices):
         CODE128 = "CODE128", "Code 128"

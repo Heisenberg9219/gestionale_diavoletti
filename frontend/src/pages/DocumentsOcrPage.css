@@ -256,6 +256,8 @@
   padding: 0 26px 14px 93px;
 }
 .ocr-new-variant label { display: grid; gap: 5px; color: #4d464c; font-size: 10px; font-weight: 800; }
+.ocr-new-variant .select-with-add { height: 38px; gap: 7px; }
+.ocr-new-variant .select-with-add button { width: 38px; height: 38px; border-radius: 6px; }
 
 .ocr-variant-sizes {
   grid-column: 1 / -1;

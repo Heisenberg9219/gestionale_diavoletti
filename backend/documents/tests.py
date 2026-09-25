@@ -291,13 +291,13 @@ class OcrPurchaseRegistrationTests(TestCase):
                 "quantity": "3", "unit_price": "10.00", "new_variant": {
                     "product_name": "Nuovo articolo", "category_id": str(self.variant.product.category_id),
                     "color_id": "", "variants": [
-                        {"sku": "OCR-S", "barcode": "1234567890123", "size_id": str(self.variant.size_id), "quantity": "1", "sale_price": "19.90"},
-                        {"sku": "OCR-M", "size_id": str(other_size.pk), "quantity": "2", "sale_price": "19.90"},
+                        {"sku": "TEST-S", "barcode": "1234567890123", "size_id": str(self.variant.size_id), "quantity": "1", "sale_price": "19.90"},
+                        {"sku": "TEST-M", "size_id": str(other_size.pk), "quantity": "2", "sale_price": "19.90"},
                     ],
                 },
             }]},
         )
-        self.assertEqual(StockBalance.objects.get(variant__sku="OCR-S", location=self.location).quantity_on_hand, 1)
-        self.assertEqual(StockBalance.objects.get(variant__sku="OCR-M", location=self.location).quantity_on_hand, 2)
-        self.assertEqual(VariantSalePrice.objects.filter(variant__sku__in=("OCR-S", "OCR-M"), amount="19.90").count(), 2)
-        self.assertTrue(ProductBarcode.objects.filter(variant__sku="OCR-S", code="1234567890123").exists())
+        self.assertEqual(StockBalance.objects.get(variant__sku="TEST-S", location=self.location).quantity_on_hand, 1)
+        self.assertEqual(StockBalance.objects.get(variant__sku="TEST-M", location=self.location).quantity_on_hand, 2)
+        self.assertEqual(VariantSalePrice.objects.filter(variant__sku__in=("TEST-S", "TEST-M"), amount="19.90").count(), 2)
+        self.assertTrue(ProductBarcode.objects.filter(variant__sku="TEST-S", code="1234567890123").exists())

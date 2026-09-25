@@ -97,6 +97,24 @@ class AuthenticationApiTests(TestCase):
 
         self.assertEqual(response.status_code, 401)
 
+    def test_refresh_rejects_an_idle_session(self):
+        expired_refresh = RefreshToken.for_user(self.owner)
+        expired_refresh["idle_expires_at"] = int(timezone.now().timestamp()) - 1
+        self.client.cookies["diavoletti_refresh"] = str(expired_refresh)
+
+        response = self.client.post("/api/v1/auth/refresh/")
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_access_token_rejects_an_idle_session(self):
+        refresh = RefreshToken.for_user(self.owner)
+        refresh["idle_expires_at"] = int(timezone.now().timestamp()) - 1
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        response = self.client.get("/api/v1/auth/me/")
+
+        self.assertEqual(response.status_code, 401)
+
     def test_existing_access_token_stops_working_when_user_is_blocked(self):
         login = self.login()
         self.owner.status = User.Status.BLOCKED
