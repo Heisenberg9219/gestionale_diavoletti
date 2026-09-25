@@ -312,6 +312,29 @@ def document_attachment_viewset(base):
     return base
 
 
+def document_ocr_analysis_viewset(base):
+    from documents.services import apply_ocr_purchase_proposal
+
+    @action(detail=True, methods=("post",), url_path="apply-purchase-proposal", permission_classes=(IsOwner,))
+    def apply_purchase_proposal(self, request, pk=None):
+        review = request.data.get("review")
+        if not isinstance(review, dict):
+            raise ValidationError({"review": "La proposta da registrare è obbligatoria."})
+        result = apply_ocr_purchase_proposal(
+            analysis=self.get_object(), review=review,
+            supplier_id=request.data.get("supplier"),
+            location_id=request.data.get("location"), applied_by=request.user,
+        )
+        return Response({
+            "document": str(result["document"].pk),
+            "invoice": str(result["invoice"].pk),
+            "receipt": str(result["receipt"].pk),
+        }, status=201)
+
+    base.apply_purchase_proposal = apply_purchase_proposal
+    return base
+
+
 def return_viewset(base):
     from returns.services import cancel_draft_return, confirm_customer_return, create_customer_return, set_return_line
     from sales.models import Sale, SaleLine

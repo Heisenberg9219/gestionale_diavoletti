@@ -186,8 +186,11 @@
 .ocr-review-summary label:nth-child(5) input { font-size: 14px; }
 
 .ocr-review-summary input,
+.ocr-review-summary select,
 .ocr-review-line input,
-.ocr-review-line select {
+.ocr-review-line select,
+.ocr-new-variant input,
+.ocr-new-variant select {
   min-width: 0;
   box-sizing: border-box;
   width: 100%;
@@ -217,7 +220,7 @@
   text-transform: uppercase;
 }
 
-.ocr-review-line { border-top: 1px solid #eeeaea; }
+.ocr-review-row { border-top: 1px solid #eeeaea; }
 .ocr-review-line > label { display: grid; place-items: center; }
 .ocr-review-line > label input[type="checkbox"] {
   width: 18px;
@@ -233,8 +236,16 @@
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
 }
-.ocr-review-line.is-discarded { opacity: .45; }
+.ocr-review-row.is-discarded { opacity: .45; }
 .ocr-review-empty { padding: 22px 26px; color: #817b80; }
+
+.ocr-new-variant {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: 10px;
+  padding: 0 26px 14px 93px;
+}
+.ocr-new-variant label { display: grid; gap: 5px; color: #4d464c; font-size: 10px; font-weight: 800; }
 
 .ocr-review-modal footer {
   align-items: center;
@@ -256,6 +267,7 @@
   .ocr-review-summary { grid-template-columns: 1fr 1fr; padding: 0 16px 16px; }
   .ocr-review-heading { display: none; }
   .ocr-review-line { grid-template-columns: 30px 1fr 1fr; padding: 14px 16px; }
+  .ocr-new-variant { grid-template-columns: 1fr 1fr; padding: 0 16px 14px 46px; }
   .ocr-review-line input:nth-of-type(n+2) { grid-column: span 1; }
   .ocr-review-modal header,
   .ocr-review-modal footer { padding: 18px 16px; align-items: flex-start; flex-direction: column; }

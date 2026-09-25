@@ -17,6 +17,7 @@ from vouchers.models import ExpiredVoucherAuthorization, Voucher, VoucherExpiryC
 from .factories import viewset_for
 from .workflows import (
     document_viewset, document_attachment_viewset, expense_viewset, gift_list_viewset, gift_item_viewset,
+    document_ocr_analysis_viewset,
     integration_sync_viewset, loyalty_activation_viewset,
     loyalty_movement_viewset, loyalty_reward_viewset,
     notification_delivery_viewset, notification_resolution_viewset,
@@ -46,6 +47,7 @@ WORKFLOWS = {
     Expense: expense_viewset,
     BusinessDocument: document_viewset,
     DocumentAttachment: document_attachment_viewset,
+    DocumentOcrAnalysis: document_ocr_analysis_viewset,
     Notification: notification_viewset,
     NotificationDelivery: notification_delivery_viewset,
     NotificationResolution: notification_resolution_viewset,
