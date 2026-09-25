@@ -11,6 +11,7 @@ from unittest.mock import patch
 from .models import BusinessDocument, DocumentAttachment, DocumentOcrAnalysis, DocumentType
 from .services import (
     apply_ocr_purchase_proposal,
+    save_ocr_purchase_proposal,
     analyze_invoice_attachment_with_azure,
     cancel_document,
     finalize_document,
@@ -265,3 +266,12 @@ class OcrPurchaseRegistrationTests(TestCase):
         self.assertEqual(result["receipt"].status, GoodsReceipt.Status.CONFIRMED)
         self.assertEqual(result["invoice"].status, SupplierInvoice.Status.CONFIRMED)
         self.assertEqual(self.analysis.proposed_data["review"]["status"], "APPLIED")
+
+    def test_review_draft_is_preserved_without_posting_stock(self):
+        save_ocr_purchase_proposal(
+            analysis=self.analysis, saved_by=self.user,
+            review={"supplier_name": "Fornitore OCR", "invoice_number": "FT-BOZZA", "items": [{"accepted": True, "description": "Da associare", "variant_id": "", "quantity": "2", "unit_price": "8.00"}]},
+        )
+        self.analysis.refresh_from_db()
+        self.assertEqual(self.analysis.proposed_data["review"]["status"], "DRAFT")
+        self.assertEqual(self.analysis.proposed_data["review"]["items"][0]["description"], "Da associare")

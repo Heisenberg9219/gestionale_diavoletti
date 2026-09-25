@@ -165,6 +165,16 @@
 .ocr-review-modal header span,
 .ocr-review-modal footer p { color: #817b80; font-size: 13px; }
 
+.ocr-review-feedback {
+  margin: 0 26px 16px;
+  padding: 11px 13px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.ocr-review-feedback.error { background: #fff0f2; color: #ae0019; }
+.ocr-review-feedback.success { background: #edf9f1; color: #167444; }
+
 .ocr-review-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

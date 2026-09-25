@@ -228,6 +228,11 @@ def _proposal_variant(*, item, user):
         return ProductVariant.objects.select_for_update().get(pk=variant_id, is_active=True)
 
     new_variant = item.get("new_variant") or {}
+    if not new_variant:
+        description = str(item.get("description") or "questa riga").strip()
+        raise ValidationError(
+            f"Associare una variante esistente oppure creare l'articolo per: {description}."
+        )
     sku = str(new_variant.get("sku") or "").strip()
     size_id = new_variant.get("size_id")
     if not sku or not size_id:
@@ -253,6 +258,27 @@ def _proposal_variant(*, item, user):
         color_id=new_variant.get("color_id") or None,
         size_id=size_id,
     )
+
+
+@transaction.atomic
+def save_ocr_purchase_proposal(*, analysis, review, saved_by):
+    """Persist the editable review independently from the final stock posting."""
+    analysis = DocumentOcrAnalysis.objects.select_for_update().get(pk=analysis.pk)
+    if analysis.status != DocumentOcrAnalysis.Status.SUCCEEDED:
+        raise ValidationError("La proposta OCR non è disponibile.")
+    if analysis.proposed_data.get("review", {}).get("status") == "APPLIED":
+        raise ValidationError("Questa proposta è già stata registrata e non può essere modificata.")
+    analysis.proposed_data = {
+        **analysis.proposed_data,
+        "review": {
+            **review,
+            "status": "DRAFT",
+            "saved_at": timezone.now().isoformat(),
+            "saved_by": str(saved_by.pk),
+        },
+    }
+    analysis.save(update_fields=("proposed_data", "updated_at"))
+    return analysis
 
 
 @transaction.atomic
@@ -304,7 +330,10 @@ def apply_ocr_purchase_proposal(*, analysis, review, supplier_id=None, location_
     prepared = []
     for item in items:
         quantity = _positive_quantity(item.get("quantity"))
-        unit_cost = Decimal(str(item.get("unit_price")))
+        try:
+            unit_cost = Decimal(str(item.get("unit_price")))
+        except Exception as exc:
+            raise ValidationError("Il costo unitario deve essere un numero valido.") from exc
         if unit_cost < 0:
             raise ValidationError("Il costo unitario non può essere negativo.")
         variant = _proposal_variant(item=item, user=applied_by)
