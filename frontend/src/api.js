@@ -30,7 +30,9 @@ export async function request(path, options = {}) {
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(body.error?.message || body.detail || "Operazione non riuscita.");
+    const details = body.error?.details;
+    const readable = details && (typeof details === "string" ? details : Object.values(details).flat().join(" "));
+    throw new Error(readable || body.error?.message || body.detail || "Operazione non riuscita.");
   }
   return response.status === 204 ? null : response.json();
 }

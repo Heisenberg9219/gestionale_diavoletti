@@ -264,3 +264,9 @@
 @media (max-width: 560px) {
   .document-form { grid-template-columns: 1fr; }
 }
+
+.ocr-review-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
+.ocr-item-details { grid-column: 2 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+.ocr-item-details label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.ocr-conflicts { padding: 16px 24px; font-size: 13px; }
+.ocr-review-modal > .catalog-error { padding: 12px 24px; }

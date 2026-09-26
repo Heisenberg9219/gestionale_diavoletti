@@ -292,7 +292,10 @@ def document_viewset(base):
 
 
 def document_attachment_viewset(base):
-    from documents.services import analyze_invoice_attachment_with_azure
+    from core.models import Location
+    from documents.services import analyze_invoice_attachment_with_azure, import_ocr_review_to_inventory, save_ocr_review, validate_ocr_review
+    from documents.models import DocumentOcrAnalysis
+    from suppliers.models import Supplier
 
     @action(detail=True, methods=("post",), url_path="analyze-invoice")
     def analyze_invoice(self, request, pk=None):
@@ -308,7 +311,35 @@ def document_attachment_viewset(base):
             )
         return Response(serializer_for(type(analysis))(analysis).data, status=201)
 
-    base.analyze_invoice = analyze_invoice
+    @action(detail=True, methods=("post",), url_path="import-to-inventory")
+    def import_to_inventory(self, request, pk=None):
+        analysis = get_object_or_404(DocumentOcrAnalysis, pk=required(request.data, "analysis_id"), attachment=self.get_object(), status="SUCCEEDED")
+        receipt = import_ocr_review_to_inventory(
+            attachment=self.get_object(),
+            imported_by=request.user,
+            analysis_id=analysis.pk,
+        )
+        from .factories import serializer_for
+        return Response(serializer_for(type(receipt))(receipt).data, status=201)
+
+    @action(detail=True, methods=("post",), url_path="save-review")
+    def save_review(self, request, pk=None):
+        attachment = self.get_object()
+        analysis = get_object_or_404(DocumentOcrAnalysis, pk=required(request.data, "analysis_id"), attachment=attachment, status="SUCCEEDED")
+        analysis = save_ocr_review(attachment=attachment, analysis_id=analysis.pk, review=required(request.data, "review"))
+        from .factories import serializer_for
+        return Response(serializer_for(DocumentOcrAnalysis)(analysis).data)
+
+    @action(detail=True, methods=("post",), url_path="validate-review")
+    def validate_review(self, request, pk=None):
+        self.get_object()
+        review = request.data.get("review")
+        if not isinstance(review, dict):
+            return Response({"detail": "Proposta non valida."}, status=400)
+        return Response({"conflicts": validate_ocr_review(review)})
+
+    base.save_review = save_review; base.validate_review = validate_review
+    base.analyze_invoice = analyze_invoice; base.import_to_inventory = import_to_inventory
     return base
 
 
