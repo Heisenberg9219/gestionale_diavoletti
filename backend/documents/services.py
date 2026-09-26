@@ -685,15 +685,30 @@ def _inventory_review(review):
         if data and item.get("variant_id") in (None, "", "__new__"):
             rows = data.get("variants") or [dict(data, quantity=item.get("quantity"))]
             for row in rows:
-                result["items"].append(dict(item, variant_id="", quantity=row.get("quantity"), sale_price=row.get("sale_price"), new_product={
+                result["items"].append(dict(item, _source_row=index, variant_id="", quantity=row.get("quantity"), sale_price=row.get("sale_price"), new_product={
                     "name": data.get("product_name"), "product_id": data.get("product_id"),
                     "category": data.get("category_id"), "tax_rate": data.get("tax_rate_id"),
                     "color": data.get("color_id"), "size": row.get("size_id"),
                     "sku": row.get("sku"), "barcode": row.get("barcode"), "group": index,
                 }))
         else:
-            result["items"].append(item)
+            result["items"].append(dict(item, _source_row=index))
     return result
+
+
+class ReviewErrors(list):
+    """Keep the command error list and row-addressable UI feedback in sync."""
+    def __init__(self):
+        super().__init__()
+        self.issues = []
+        self.row = None
+
+    def append(self, message):
+        super().append(message)
+        kind = "conflict" if any(word in message for word in ("già", "identico", "simile", "ripetut", "esistono")) else "incomplete"
+        issue = {"row": self.row, "kind": kind, "message": message}
+        if issue not in self.issues:
+            self.issues.append(issue)
 
 
 def validate_ocr_review(review):
@@ -701,18 +716,24 @@ def validate_ocr_review(review):
     from catalog.models import Category, Color, Product, ProductBarcode, ProductVariant, Size
     from core.models import Location, TaxRate
     from suppliers.models import Supplier
-    errors = []
+    errors = ReviewErrors()
     if not isinstance(review.get("items", []), list) or any(not isinstance(item, dict) for item in review.get("items", [])):
         return ["Le righe della proposta non sono valide."]
     for index, item in enumerate(review.get("items", []), 1):
+        errors.row = index - 1
         data = item.get("new_variant")
         if data and item.get("accepted", True) and item.get("variant_id") in (None, "", "__new__"):
             try:
                 rows = data.get("variants") or [dict(data, quantity=item.get("quantity"))]
-                if sum(_positive_integer(row.get("quantity"), "quantity") for row in rows) != _positive_integer(item.get("quantity"), "quantity"):
-                    raise ValueError()
+                distributed = sum(_positive_integer(row.get("quantity"), "quantity") for row in rows)
+                expected = _positive_integer(item.get("quantity"), "quantity")
             except (ValidationError, ValueError, TypeError, AttributeError):
-                errors.append(f"Riga {index}: la somma delle quantità per taglia deve coincidere con la quantità della riga.")
+                # Invalid/missing quantities are reported individually below.
+                pass
+            else:
+                if distributed != expected:
+                    errors.append(f"Riga {index}: distribuiti {distributed} pezzi su {expected}. Correggi le quantità delle taglie.")
+    errors.row = None
     try:
         review = _inventory_review(review)
     except (TypeError, AttributeError):
@@ -723,7 +744,7 @@ def validate_ocr_review(review):
         except (ValidationError, ValueError, TypeError):
             valid = False
         if not valid:
-            errors.append(f"{label}: seleziona un valore attivo valido.")
+            errors.append(f"{label}: seleziona un valore." if not value else f"{label}: il valore selezionato non è più disponibile.")
     reference(Supplier, review.get("supplier"), "Fornitore")
     reference(Location, review.get("location"), "Sede")
     if not str(review.get("invoice_number") or "").strip():
@@ -753,13 +774,20 @@ def validate_ocr_review(review):
     skus, barcodes, variants = set(), set(), set()
     groups, combinations = set(), set()
     for index, item in enumerate(included, 1):
-        prefix = f"Riga {index}"
-        try:
-            _positive_integer(item.get("quantity"), "Quantità")
-            _money(item.get("unit_price"), "Costo")
-            _money(item.get("sale_price"), "Prezzo vendita", positive=True)
-        except (ValidationError, ArithmeticError):
-            errors.append(f"{prefix}: quantità intera positiva, costo e prezzo vendita sono obbligatori.")
+        errors.row = item["_source_row"]
+        prefix = f"Riga {errors.row + 1}"
+        if not item.get("variant_id") and not item.get("new_product"):
+            errors.append(f"{prefix}: scegli una variante esistente oppure Crea articolo e variante.")
+            continue
+        for key, label, parser in (
+            ("quantity", "Quantità", lambda value: _positive_integer(value, "quantity")),
+            ("unit_price", "Costo acquisto", lambda value: _money(value, "unit_price")),
+            ("sale_price", "Prezzo vendita", lambda value: _money(value, "sale_price", positive=True)),
+        ):
+            try:
+                parser(item.get(key))
+            except (ValidationError, ArithmeticError):
+                errors.append(f"{prefix}: {label} da completare." if item.get(key) in (None, "") else f"{prefix}: {label} non valido.")
         if item.get("variant_id"):
             reference(ProductVariant, item["variant_id"], prefix)
             try:
@@ -783,9 +811,9 @@ def validate_ocr_review(review):
         if data.get("product_id"):
             reference(Product, data["product_id"], f"{prefix} prodotto")
         else:
-            for model, key in ((Category, "category"), (TaxRate, "tax_rate")):
-                reference(model, data.get(key), f"{prefix} {key}")
-        reference(Size, data.get("size"), f"{prefix} taglia")
+            for model, key, label in ((Category, "category", "Categoria"), (TaxRate, "tax_rate", "Aliquota IVA")):
+                reference(model, data.get(key), f"{prefix}: {label}")
+        reference(Size, data.get("size"), f"{prefix}: Taglia")
         combination = (data.get("product_id") or data.get("group", f"row-{index}"), data.get("size"), data.get("color") or None)
         if combination in combinations:
             errors.append(f"{prefix}: taglia e colore ripetuti per lo stesso prodotto.")

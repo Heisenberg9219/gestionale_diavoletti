@@ -336,7 +336,8 @@ def document_attachment_viewset(base):
         review = request.data.get("review")
         if not isinstance(review, dict):
             return Response({"detail": "Proposta non valida."}, status=400)
-        return Response({"conflicts": validate_ocr_review(review)})
+        errors = validate_ocr_review(review)
+        return Response({"conflicts": errors, "issues": getattr(errors, "issues", [{"row": None, "kind": "incomplete", "message": message} for message in errors])})
 
     base.save_review = save_review; base.validate_review = validate_review
     base.analyze_invoice = analyze_invoice; base.import_to_inventory = import_to_inventory
