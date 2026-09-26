@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { login, logout, request } from "./api";
+import { login, logout, refreshSession, request } from "./api";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 
-const IDLE_TIMEOUT_MINUTES = Number(import.meta.env.VITE_IDLE_TIMEOUT_MINUTES || 30);
+const IDLE_TIMEOUT_MINUTES = Number(import.meta.env.VITE_IDLE_TIMEOUT_MINUTES || 20);
 const IDLE_TIMEOUT_MS = IDLE_TIMEOUT_MINUTES * 60 * 1000;
 
 export default function App() {
@@ -18,11 +18,16 @@ export default function App() {
   useEffect(() => {
     if (!user) return undefined;
     let timer;
+    let lastTokenRefresh = Date.now();
     const resetTimer = () => {
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         logout().finally(() => setUser(null));
       }, IDLE_TIMEOUT_MS);
+      if (Date.now() - lastTokenRefresh >= 60 * 1000) {
+        lastTokenRefresh = Date.now();
+        refreshSession();
+      }
     };
     const activityEvents = ["pointerdown", "keydown", "touchstart"];
     activityEvents.forEach((eventName) => window.addEventListener(eventName, resetTimer));

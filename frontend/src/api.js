@@ -12,20 +12,26 @@ function notifySessionExpired() {
   window.dispatchEvent(new Event("auth:expired"));
 }
 
+export async function refreshSession() {
+  const refreshed = await fetch(`${API_URL}/auth/refresh/`, { method: "POST", credentials: "include" });
+  if (!refreshed.ok) {
+    notifySessionExpired();
+    return false;
+  }
+  accessToken = (await refreshed.json()).access;
+  sessionStorage.setItem("accessToken", accessToken);
+  return true;
+}
+
 export async function request(path, options = {}) {
   const headers = new Headers(options.headers);
   if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
   if (options.body && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
   let response = await fetch(`${API_URL}${path}`, { ...options, headers, credentials: "include" });
   if (response.status === 401 && path !== "/auth/refresh/") {
-    const refreshed = await fetch(`${API_URL}/auth/refresh/`, { method: "POST", credentials: "include" });
-    if (refreshed.ok) {
-      accessToken = (await refreshed.json()).access;
-      sessionStorage.setItem("accessToken", accessToken);
+    if (await refreshSession()) {
       headers.set("Authorization", `Bearer ${accessToken}`);
       response = await fetch(`${API_URL}${path}`, { ...options, headers, credentials: "include" });
-    } else {
-      notifySessionExpired();
     }
   }
   if (!response.ok) {

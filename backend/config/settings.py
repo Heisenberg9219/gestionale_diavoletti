@@ -189,7 +189,7 @@ SPECTACULAR_SETTINGS = {
 }
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=20),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
@@ -206,3 +206,4 @@ AUTH_REFRESH_COOKIE_NAME = "diavoletti_refresh"
 AUTH_REFRESH_COOKIE_SECURE = env.bool("DJANGO_COOKIE_SECURE", default=not DEBUG)
 AUTH_REFRESH_COOKIE_SAMESITE = "Lax"
 AUTH_SESSION_MAX_LIFETIME = timedelta(hours=8)
+AUTH_SESSION_IDLE_TIMEOUT = timedelta(minutes=20)

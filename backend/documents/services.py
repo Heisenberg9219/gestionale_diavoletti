@@ -1,6 +1,7 @@
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from difflib import SequenceMatcher
 from datetime import date
+from uuid import uuid4
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured, ValidationError
@@ -172,6 +173,271 @@ def analyze_invoice_attachment_with_azure(*, attachment, requested_by):
     return analysis
 
 
+MONEY = Decimal("0.01")
+
+
+def _round_money(value):
+    try:
+        return Decimal(str(value)).quantize(MONEY, rounding=ROUND_HALF_UP)
+    except Exception as exc:
+        raise ValidationError("Importo non valido nella proposta OCR.") from exc
+
+
+def _positive_quantity(value):
+    return _positive_integer(value, "quantity")
+
+def _new_code(prefix, value):
+    """Genera codici tecnici univoci per entità nate dalla revisione OCR."""
+    return f"{prefix}-{value.hex[:12].upper()}"
+
+
+def _next_sku():
+    from catalog.models import SkuSequence
+
+    sequence, _ = SkuSequence.objects.get_or_create(key="GLOBAL")
+    sequence = SkuSequence.objects.select_for_update().get(pk=sequence.pk)
+    sequence.last_number += 1
+    sequence.save(update_fields=("last_number", "updated_at"))
+    return f"SKU-{sequence.last_number:06d}"
+
+
+def _proposal_supplier(*, supplier_id, supplier_name, vat_number):
+    from suppliers.models import Supplier
+
+    if supplier_id:
+        return Supplier.objects.get(pk=supplier_id, is_active=True)
+    supplier_name = (supplier_name or "").strip()
+    vat_number = (vat_number or "").strip()
+    if not supplier_name:
+        raise ValidationError("Indicare o selezionare il fornitore della fattura.")
+    if vat_number:
+        supplier = Supplier.objects.filter(vat_number=vat_number).first()
+        if supplier:
+            return supplier
+    supplier = Supplier.objects.filter(business_name__iexact=supplier_name).first()
+    if supplier:
+        return supplier
+    return Supplier.objects.create(
+        code=_new_code("OCR-SUP", uuid4()),
+        business_name=supplier_name,
+        vat_number=vat_number,
+    )
+
+
+def _proposal_product(*, item, new_variant):
+    from catalog.models import Product, ProductVariant
+    from core.models import TaxRate
+
+    product_id = new_variant.get("product_id")
+    if product_id:
+        return Product.objects.get(pk=product_id, is_active=True)
+    product_name = str(new_variant.get("product_name") or item.get("description") or "").strip()
+    category_id = new_variant.get("category_id")
+    if not product_name or not category_id:
+        raise ValidationError("Per un nuovo prodotto indicare nome e categoria.")
+    tax_rate = TaxRate.objects.filter(is_active=True, pk=new_variant.get("tax_rate_id")).first()
+    if tax_rate is None:
+        raise ValidationError("Configurare un'aliquota IVA attiva prima di creare un articolo.")
+    product = Product(code=_new_code("OCR-PRD", uuid4()), name=product_name, category_id=category_id, tax_rate=tax_rate)
+    product.full_clean()
+    product.save()
+    return product
+
+
+def _proposal_variants(*, item, user):
+    from catalog.models import ProductBarcode, ProductVariant
+
+    variant_id = item.get("variant_id")
+    if variant_id:
+        return [(ProductVariant.objects.select_for_update().get(pk=variant_id, is_active=True), _positive_quantity(item.get("quantity")), _money(item.get("sale_price"), "Prezzo vendita", positive=True))]
+    new_variant = item.get("new_variant") or {}
+    if not new_variant:
+        description = str(item.get("description") or "questa riga").strip()
+        raise ValidationError(f"Associare una variante esistente oppure creare l'articolo per: {description}.")
+    variants = new_variant.get("variants") or [{
+        "sku": new_variant.get("sku"), "size_id": new_variant.get("size_id"),
+        "quantity": item.get("quantity"), "sale_price": new_variant.get("sale_price"),
+        "barcode": new_variant.get("barcode"),
+    }]
+    product = _proposal_product(item=item, new_variant=new_variant)
+    result = []
+    for row in variants:
+        suggested_sku = str(row.get("sku") or "").strip()
+        sku = suggested_sku
+        size_id = row.get("size_id")
+        quantity = _positive_quantity(row.get("quantity"))
+        try:
+            sale_price = _money(row.get("sale_price"), "Prezzo vendita", positive=True)
+        except Exception as exc:
+            raise ValidationError("Il prezzo di vendita deve essere un numero valido.") from exc
+        if not sku or not size_id or sale_price <= 0:
+            raise ValidationError("Per ogni taglia indicare SKU, quantità e prezzo di vendita maggiore di zero.")
+        variant = ProductVariant(product=product, sku=sku, color_id=new_variant.get("color_id") or None, size_id=size_id)
+        variant.full_clean()
+        variant.save()
+        barcode = str(row.get("barcode") or "").strip()
+        if barcode:
+            ProductBarcode.objects.create(
+                variant=variant, code=barcode,
+                barcode_type={8: ProductBarcode.Type.EAN8, 13: ProductBarcode.Type.EAN13}.get(len(barcode), ProductBarcode.Type.OTHER),
+                source=ProductBarcode.Source.MANUFACTURER,
+                is_primary=True,
+            )
+        result.append((variant, quantity, sale_price))
+    total_quantity = sum((quantity for _, quantity, _ in result), Decimal("0"))
+    if total_quantity != _positive_quantity(item.get("quantity")):
+        raise ValidationError("La somma delle quantità per taglia deve coincidere con la quantità della riga OCR.")
+    return result
+
+
+@transaction.atomic
+def save_ocr_purchase_proposal(*, analysis, review, saved_by):
+    """Persist the editable review independently from the final stock posting."""
+    return save_ocr_review(attachment=analysis.attachment, analysis_id=analysis.pk, review=review)
+
+
+
+@transaction.atomic
+def apply_ocr_purchase_proposal(*, analysis, review, supplier_id=None, location_id=None, applied_by):
+    """Turn an approved invoice proposal into document, purchase invoice and stock."""
+    from core.models import Location
+    from purchasing.models import (
+        GoodsReceipt, GoodsReceiptLine, SupplierInvoice, SupplierInvoiceLine,
+        SupplierInvoiceReceipt,
+    )
+    from purchasing.services import confirm_goods_receipt, confirm_supplier_invoice
+    from suppliers.models import SupplierVariant
+
+    DocumentAttachment.objects.select_for_update().get(pk=analysis.attachment_id)
+    analysis = DocumentOcrAnalysis.objects.select_for_update().select_related("attachment__document").get(pk=analysis.pk)
+    document = BusinessDocument.objects.select_for_update().select_related("document_type").get(pk=analysis.attachment.document_id)
+    review = dict(review, supplier=supplier_id or review.get("supplier") or review.get("supplier_id"), location=location_id or review.get("location") or review.get("location_id"))
+    errors = validate_ocr_review(review)
+    if errors:
+        raise ValidationError(errors)
+    supplier_id, location_id = review["supplier"], review["location"]
+    if analysis.status != DocumentOcrAnalysis.Status.SUCCEEDED:
+        raise ValidationError("La proposta OCR non è disponibile.")
+    if analysis.proposed_data.get("review", {}).get("status") in {"APPLIED", "IMPORTED"}:
+        raise ValidationError("Questa proposta è già stata registrata.")
+    if document.status != BusinessDocument.Status.DRAFT:
+        raise ValidationError("Il documento non è più una bozza modificabile.")
+    if document.direction != DocumentType.Direction.INCOMING:
+        raise ValidationError("La registrazione OCR è prevista per fatture ricevute.")
+
+    items = [item for item in review.get("items", []) if item.get("accepted", True)]
+    if not items:
+        raise ValidationError("Includere almeno una riga per registrare la fattura.")
+    invoice_number = str(review.get("invoice_number") or "").strip()
+    invoice_date = review.get("invoice_date")
+    if not invoice_number or not invoice_date:
+        raise ValidationError("Numero e data della fattura sono obbligatori.")
+    location = Location.objects.get(pk=location_id, is_active=True) if location_id else Location.objects.filter(is_active=True).order_by("pk").first()
+    if location is None:
+        raise ValidationError("Selezionare la destinazione del carico in magazzino.")
+    supplier = _proposal_supplier(
+        supplier_id=supplier_id,
+        supplier_name=review.get("supplier_name"),
+        vat_number=analysis.proposed_data.get("supplier_vat_number"),
+    )
+    if SupplierInvoice.objects.filter(
+        supplier=supplier, invoice_number=invoice_number,
+    ).exists():
+        raise ValidationError("Esiste già una fattura con questo numero per il fornitore selezionato.")
+
+    prepared = []
+    for item in items:
+        try:
+            unit_cost = _money(item.get("unit_price"), "Costo acquisto")
+        except Exception as exc:
+            raise ValidationError("Il costo unitario deve essere un numero valido.") from exc
+        if unit_cost < 0:
+            raise ValidationError("Il costo unitario non può essere negativo.")
+        for variant, quantity, sale_price in _proposal_variants(item=item, user=applied_by):
+            prepared.append((dict(item, sale_price=str(sale_price)), variant, quantity, unit_cost))
+
+    taxable_amount = sum((_round_money(quantity * cost) for _, _, quantity, cost in prepared), Decimal("0.00"))
+    if taxable_amount != _money(review.get("taxable_amount"), "Imponibile"):
+        raise ValidationError("L'imponibile fattura deve coincidere con la somma delle righe incluse.")
+    tax_rate = _money(review.get("tax_rate"), "Aliquota IVA")
+    if tax_rate < 0 or tax_rate > 100:
+        raise ValidationError("L'aliquota IVA deve essere compresa tra 0 e 100.")
+    total_amount = _money(review.get("total_amount"), "Totale")
+    tax_amount = total_amount - taxable_amount
+
+    receipt = GoodsReceipt.objects.create(
+        number=_new_code("OCR-GR", analysis.pk), supplier=supplier,
+        destination_location=location, received_at=timezone.now(),
+        delivery_note_number=invoice_number, delivery_note_date=invoice_date,
+        notes=f"Ricevimento creato da OCR {analysis.attachment.original_name}",
+        created_by=applied_by,
+    )
+    receipt_lines = []
+    for item, variant, quantity, unit_cost in prepared:
+        receipt_line = GoodsReceiptLine.objects.create(
+            receipt=receipt, variant=variant, quantity_received=quantity,
+            unit_cost=unit_cost, final_sale_price=_money(item["sale_price"], "sale_price", positive=True), notes=str(item.get("description") or ""),
+        )
+        receipt_lines.append(receipt_line)
+        SupplierVariant.objects.get_or_create(
+            supplier=supplier, variant=variant,
+            defaults={"is_preferred": True},
+        )
+    confirm_goods_receipt(receipt=receipt, confirmed_by=applied_by)
+
+    invoice = SupplierInvoice.objects.create(
+        supplier=supplier, invoice_number=invoice_number, invoice_date=invoice_date,
+        due_date=review.get("due_date") or None, taxable_amount=taxable_amount,
+        tax_amount=tax_amount, total_amount=total_amount, created_by=applied_by,
+        notes=f"Fattura creata da OCR {analysis.attachment.original_name}",
+    )
+    SupplierInvoiceReceipt.objects.create(invoice=invoice, receipt=receipt)
+    remaining_tax = tax_amount
+    for index, ((item, variant, quantity, unit_cost), receipt_line) in enumerate(zip(prepared, receipt_lines)):
+        line_taxable = _round_money(quantity * unit_cost)
+        line_tax = remaining_tax if index == len(prepared) - 1 else _round_money(line_taxable * tax_rate / Decimal("100"))
+        remaining_tax -= line_tax
+        SupplierInvoiceLine.objects.create(
+            invoice=invoice, variant=variant, receipt_line=receipt_line,
+            quantity_invoiced=quantity, final_unit_cost=unit_cost,
+            tax_percentage=tax_rate, taxable_amount=line_taxable,
+            tax_amount=line_tax, total_amount=line_taxable + line_tax,
+            notes=str(item.get("description") or ""),
+        )
+    confirm_supplier_invoice(invoice=invoice, confirmed_by=applied_by)
+
+    document.number = invoice_number
+    document.document_date = invoice_date
+    document.title = f"Fattura acquisto {invoice_number}"
+    document.counterparty_name = supplier.business_name
+    document.counterparty_vat_number = supplier.vat_number
+    document.taxable_amount = taxable_amount
+    document.tax_amount = tax_amount
+    document.total_amount = total_amount
+    document.source_type = "purchasing.SupplierInvoice"
+    document.source_id = invoice.pk
+    document.full_clean()
+    document.save(update_fields=(
+        "number", "document_date", "title", "counterparty_name",
+        "counterparty_vat_number", "taxable_amount", "tax_amount",
+        "total_amount", "source_type", "source_id", "updated_at",
+    ))
+    finalize_document(document=document, finalized_by=applied_by, number=invoice_number)
+
+    saved_review = {
+        **review, "tax_rate": str(tax_rate), "taxable_amount": str(taxable_amount),
+        "tax_amount": str(tax_amount), "total_amount": str(total_amount),
+        "status": "APPLIED", "applied_at": timezone.now().isoformat(),
+        "supplier_id": str(supplier.pk), "location_id": str(location.pk),
+        "invoice_id": str(invoice.pk), "receipt_id": str(receipt.pk),
+    }
+    analysis.proposed_data = {**analysis.proposed_data, "review": saved_review}
+    analysis.save(update_fields=("proposed_data", "updated_at"))
+    receipt.refresh_from_db()
+    invoice.refresh_from_db()
+    return {"document": document, "invoice": invoice, "receipt": receipt}
+
+
 def _record_status_change(*, document, previous_status, changed_by, reason=""):
     return DocumentStatusChange.objects.create(
         document=document,
@@ -302,6 +568,9 @@ def import_ocr_review_to_inventory(*, attachment, imported_by, analysis_id):
     document = BusinessDocument.objects.select_for_update().get(pk=attachment.document_id)
     analysis = DocumentOcrAnalysis.objects.select_for_update().get(pk=analysis_id, attachment=attachment, status="SUCCEEDED")
     review = analysis.proposed_data.get("review", {})
+    if any(item.get("new_variant") for item in review.get("items", [])):
+        result = apply_ocr_purchase_proposal(analysis=analysis, review=dict(review, items=[dict(item, variant_id="" if item.get("variant_id") == "__new__" else item.get("variant_id")) for item in review["items"]]), applied_by=imported_by)
+        return result["receipt"]
     errors = validate_ocr_review(review)
     if errors:
         raise ValidationError(errors)
@@ -312,7 +581,7 @@ def import_ocr_review_to_inventory(*, attachment, imported_by, analysis_id):
     lines = [dict(item, unit_cost=item.get("unit_price")) for item in review["items"] if item.get("accepted", True)]
     if document.direction != "INCOMING" or document.status == "CANCELLED":
         raise ValidationError("Il carico richiede un documento di acquisto ricevuto e non annullato.")
-    if document.source_type == "GOODS_RECEIPT":
+    if document.source_type in {"GOODS_RECEIPT", "purchasing.SupplierInvoice"}:
         raise ValidationError("Questo documento è già stato caricato in magazzino.")
     receipt_number = f"OCR-{attachment.pk.hex[:16].upper()}"
     if GoodsReceipt.objects.filter(number=receipt_number).exists():
@@ -408,12 +677,46 @@ def import_ocr_review_to_inventory(*, attachment, imported_by, analysis_id):
     return receipt
 
 
+def _inventory_review(review):
+    result = dict(review, supplier=review.get("supplier") or review.get("supplier_id"), location=review.get("location") or review.get("location_id"))
+    result["items"] = []
+    for index, item in enumerate(review.get("items", [])):
+        data = item.get("new_variant")
+        if data and item.get("variant_id") in (None, "", "__new__"):
+            rows = data.get("variants") or [dict(data, quantity=item.get("quantity"))]
+            for row in rows:
+                result["items"].append(dict(item, variant_id="", quantity=row.get("quantity"), sale_price=row.get("sale_price"), new_product={
+                    "name": data.get("product_name"), "product_id": data.get("product_id"),
+                    "category": data.get("category_id"), "tax_rate": data.get("tax_rate_id"),
+                    "color": data.get("color_id"), "size": row.get("size_id"),
+                    "sku": row.get("sku"), "barcode": row.get("barcode"), "group": index,
+                }))
+        else:
+            result["items"].append(item)
+    return result
+
+
 def validate_ocr_review(review):
     """Return blocking errors, including collisions inside the proposal itself."""
     from catalog.models import Category, Color, Product, ProductBarcode, ProductVariant, Size
     from core.models import Location, TaxRate
     from suppliers.models import Supplier
     errors = []
+    if not isinstance(review.get("items", []), list) or any(not isinstance(item, dict) for item in review.get("items", [])):
+        return ["Le righe della proposta non sono valide."]
+    for index, item in enumerate(review.get("items", []), 1):
+        data = item.get("new_variant")
+        if data and item.get("accepted", True) and item.get("variant_id") in (None, "", "__new__"):
+            try:
+                rows = data.get("variants") or [dict(data, quantity=item.get("quantity"))]
+                if sum(_positive_integer(row.get("quantity"), "quantity") for row in rows) != _positive_integer(item.get("quantity"), "quantity"):
+                    raise ValueError()
+            except (ValidationError, ValueError, TypeError, AttributeError):
+                errors.append(f"Riga {index}: la somma delle quantità per taglia deve coincidere con la quantità della riga.")
+    try:
+        review = _inventory_review(review)
+    except (TypeError, AttributeError):
+        return errors + ["I dati delle varianti non sono validi."]
     def reference(model, value, label):
         try:
             valid = model.objects.filter(pk=value, is_active=True).exists() if value else False
@@ -440,8 +743,15 @@ def validate_ocr_review(review):
     included = [item for item in items if isinstance(item, dict) and item.get("accepted", True)]
     if not included:
         errors.append("Includi almeno una riga.")
+    try:
+        line_subtotal = sum((_round_money(_positive_integer(item.get("quantity"), "quantity") * _money(item.get("unit_price"), "unit_price")) for item in included), Decimal("0"))
+        if line_subtotal != _money(review.get("taxable_amount"), "Imponibile"):
+            errors.append("L'imponibile fattura deve coincidere con la somma delle righe incluse. Usa Ricalcola importi o correggi le righe.")
+    except (ValidationError, ArithmeticError):
+        pass
     names = list(Product.objects.values_list("name", flat=True))
     skus, barcodes, variants = set(), set(), set()
+    groups, combinations = set(), set()
     for index, item in enumerate(included, 1):
         prefix = f"Riga {index}"
         try:
@@ -466,12 +776,26 @@ def validate_ocr_review(review):
             errors.append(f"{prefix}: dati articolo non validi.")
             continue
         name, sku, barcode = (str(data.get(key) or "").strip() for key in ("name", "sku", "barcode"))
-        if not name or not sku:
+        if (not name and not data.get("product_id")) or not sku:
             errors.append(f"{prefix}: nome e SKU sono obbligatori.")
         if len(name) > 160 or len(sku) > 64 or len(barcode) > 128:
             errors.append(f"{prefix}: nome (160), SKU (64) o barcode (128) superano la lunghezza massima.")
-        for model, key in ((Category, "category"), (TaxRate, "tax_rate"), (Size, "size")):
-            reference(model, data.get(key), f"{prefix} {key}")
+        if data.get("product_id"):
+            reference(Product, data["product_id"], f"{prefix} prodotto")
+        else:
+            for model, key in ((Category, "category"), (TaxRate, "tax_rate")):
+                reference(model, data.get(key), f"{prefix} {key}")
+        reference(Size, data.get("size"), f"{prefix} taglia")
+        combination = (data.get("product_id") or data.get("group", f"row-{index}"), data.get("size"), data.get("color") or None)
+        if combination in combinations:
+            errors.append(f"{prefix}: taglia e colore ripetuti per lo stesso prodotto.")
+        combinations.add(combination)
+        if data.get("product_id"):
+            try:
+                if ProductVariant.objects.filter(product_id=data["product_id"], size_id=data.get("size"), color_id=data.get("color") or None).exists():
+                    errors.append(f"{prefix}: questa taglia e colore esistono già. Associa la variante esistente.")
+            except (ValidationError, ValueError, TypeError):
+                pass
         if data.get("color"):
             reference(Color, data["color"], f"{prefix} colore")
         if sku.casefold() in skus or ProductVariant.objects.filter(sku__iexact=sku).exists():
@@ -480,9 +804,12 @@ def validate_ocr_review(review):
             errors.append(f"{prefix}: barcode già presente. Associa la variante esistente.")
         normalized = " ".join(name.casefold().split())
         matches = [other for other in names if SequenceMatcher(None, normalized, " ".join(other.casefold().split())).ratio() >= .88]
-        if name and matches:
+        group = data.get("group", f"row-{index}")
+        if name and matches and not data.get("product_id") and group not in groups:
             errors.append(f"{prefix}: nome identico o simile a {matches[0]}. Associa una variante oppure precisa il nome del nuovo articolo.")
-        names.append(name)
+        if not data.get("product_id") and group not in groups:
+            names.append(name)
+        groups.add(group)
         skus.add(sku.casefold())
         if barcode:
             barcodes.add(barcode.casefold())
@@ -493,7 +820,7 @@ def validate_ocr_review(review):
 def save_ocr_review(*, attachment, analysis_id, review):
     attachment = DocumentAttachment.objects.select_for_update().get(pk=attachment.pk)
     analysis = DocumentOcrAnalysis.objects.select_for_update().get(pk=analysis_id, attachment=attachment, status="SUCCEEDED")
-    if analysis.proposed_data.get("review", {}).get("status") == "IMPORTED" or attachment.document.source_type == "GOODS_RECEIPT":
+    if analysis.proposed_data.get("review", {}).get("status") in {"APPLIED", "IMPORTED"} or attachment.document.source_type in {"GOODS_RECEIPT", "purchasing.SupplierInvoice"}:
         raise ValidationError("La proposta è già stata importata e non è modificabile.")
     if not isinstance(review, dict) or not isinstance(review.get("items"), list) or any(not isinstance(item, dict) for item in review["items"]):
         raise ValidationError("La proposta deve contenere un elenco di righe valido.")

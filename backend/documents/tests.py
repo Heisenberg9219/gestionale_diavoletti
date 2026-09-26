@@ -10,6 +10,8 @@ from unittest.mock import patch
 
 from .models import BusinessDocument, DocumentAttachment, DocumentOcrAnalysis, DocumentType
 from .services import (
+    apply_ocr_purchase_proposal,
+    save_ocr_purchase_proposal,
     analyze_invoice_attachment_with_azure,
     cancel_document,
     finalize_document,
@@ -226,3 +228,76 @@ class AzureInvoiceOcrTests(TestCase):
 
         self.assertEqual(analysis.status, DocumentOcrAnalysis.Status.FAILED)
         self.assertIn("non raggiungibile", analysis.error_message)
+
+
+class OcrPurchaseRegistrationTests(TestCase):
+    def setUp(self):
+        from catalog.models import Category, Product, ProductVariant, Size, SizeScale
+        from core.models import Location, TaxRate
+
+        self.user = get_user_model().objects.create_user(email="ocr-register@example.com", password="test-password")
+        self.document_type = DocumentType.objects.create(code="OCR_PURCHASE", name="Fattura OCR acquisto", direction=DocumentType.Direction.INCOMING)
+        tax_rate = TaxRate.objects.create(code="OCR_PURCHASE_VAT", name="IVA OCR", percentage="22.00")
+        category = Category.objects.create(code="OCR_PURCHASE_CATEGORY", name="Categoria OCR")
+        scale = SizeScale.objects.create(code="OCR_PURCHASE_SCALE", name="Scala OCR", scale_type=SizeScale.Type.ONE_SIZE)
+        size = Size.objects.create(size_scale=scale, code="ONE", label="Unica")
+        product = Product.objects.create(code="OCR_PURCHASE_PRODUCT", name="Prodotto OCR", category=category, tax_rate=tax_rate)
+        self.variant = ProductVariant.objects.create(product=product, sku="OCR-PURCHASE-SKU", size=size)
+        self.location = Location.objects.create(code="OCR_PURCHASE_LOCATION", name="Magazzino OCR", type=Location.Type.STOCKROOM)
+        self.document = BusinessDocument.objects.create(document_type=self.document_type, direction=DocumentType.Direction.INCOMING, document_date=date(2026, 9, 1), title="Da OCR", taxable_amount="0.00", tax_amount="0.00", total_amount="0.00", created_by=self.user)
+        attachment = DocumentAttachment.objects.create(document=self.document, original_name="fattura.pdf", file=SimpleUploadedFile("fattura.pdf", b"%PDF"), uploaded_by=self.user)
+        self.analysis = DocumentOcrAnalysis.objects.create(attachment=attachment, provider=DocumentOcrAnalysis.Provider.AZURE_DOCUMENT_INTELLIGENCE, status=DocumentOcrAnalysis.Status.SUCCEEDED, proposed_data={"supplier_vat_number": "IT12345678901"})
+
+    def test_approved_proposal_registers_invoice_and_loads_stock(self):
+        result = apply_ocr_purchase_proposal(
+            analysis=self.analysis,
+            applied_by=self.user,
+            location_id=self.location.pk,
+            review={"supplier_name": "Fornitore OCR", "invoice_number": "FT-42", "invoice_date": "2026-09-01", "tax_rate": "22", "items": [{"accepted": True, "description": "Prodotto OCR", "variant_id": str(self.variant.pk), "quantity": "3", "unit_price": "10.00"}]},
+        )
+        from inventory.models import StockBalance
+        from purchasing.models import GoodsReceipt, SupplierInvoice
+
+        self.document.refresh_from_db(); self.analysis.refresh_from_db()
+        self.assertEqual(self.document.status, BusinessDocument.Status.REGISTERED)
+        self.assertEqual(self.document.number, "FT-42")
+        self.assertEqual(self.document.total_amount, Decimal("36.60"))
+        self.assertEqual(StockBalance.objects.get(variant=self.variant, location=self.location).quantity_on_hand, 3)
+        self.assertEqual(result["receipt"].status, GoodsReceipt.Status.CONFIRMED)
+        self.assertEqual(result["invoice"].status, SupplierInvoice.Status.CONFIRMED)
+        self.assertEqual(self.analysis.proposed_data["review"]["status"], "APPLIED")
+
+    def test_review_draft_is_preserved_without_posting_stock(self):
+        save_ocr_purchase_proposal(
+            analysis=self.analysis, saved_by=self.user,
+            review={"supplier_name": "Fornitore OCR", "invoice_number": "FT-BOZZA", "items": [{"accepted": True, "description": "Da associare", "variant_id": "", "quantity": "2", "unit_price": "8.00"}]},
+        )
+        self.analysis.refresh_from_db()
+        self.assertEqual(self.analysis.proposed_data["review"]["status"], "DRAFT")
+        self.assertEqual(self.analysis.proposed_data["review"]["items"][0]["description"], "Da associare")
+
+    def test_new_product_can_split_the_ocr_quantity_across_sizes(self):
+        from catalog.models import ProductBarcode, Size
+        from inventory.models import StockBalance
+        from pricing.models import VariantSalePrice
+
+        other_size = Size.objects.create(
+            size_scale=self.variant.size.size_scale, code="M", label="M",
+        )
+        apply_ocr_purchase_proposal(
+            analysis=self.analysis, applied_by=self.user, location_id=self.location.pk,
+            review={"supplier_name": "Fornitore OCR", "invoice_number": "FT-TAGLIE", "invoice_date": "2026-09-01", "tax_rate": "22", "items": [{
+                "accepted": True, "description": "Nuovo articolo", "variant_id": "",
+                "quantity": "3", "unit_price": "10.00", "new_variant": {
+                    "product_name": "Nuovo articolo", "category_id": str(self.variant.product.category_id),
+                    "color_id": "", "variants": [
+                        {"sku": "TEST-S", "barcode": "1234567890123", "size_id": str(self.variant.size_id), "quantity": "1", "sale_price": "19.90"},
+                        {"sku": "TEST-M", "size_id": str(other_size.pk), "quantity": "2", "sale_price": "19.90"},
+                    ],
+                },
+            }]},
+        )
+        self.assertEqual(StockBalance.objects.get(variant__sku="TEST-S", location=self.location).quantity_on_hand, 1)
+        self.assertEqual(StockBalance.objects.get(variant__sku="TEST-M", location=self.location).quantity_on_hand, 2)
+        self.assertEqual(VariantSalePrice.objects.filter(variant__sku__in=("TEST-S", "TEST-M"), amount="19.90").count(), 2)
+        self.assertTrue(ProductBarcode.objects.filter(variant__sku="TEST-S", code="1234567890123").exists())

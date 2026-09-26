@@ -343,6 +343,41 @@ def document_attachment_viewset(base):
     return base
 
 
+def document_ocr_analysis_viewset(base):
+    from documents.services import apply_ocr_purchase_proposal, save_ocr_purchase_proposal
+
+    def proposal_from_request(request):
+        review = request.data.get("review")
+        if not isinstance(review, dict):
+            raise ValidationError({"review": "La proposta da salvare è obbligatoria."})
+        return review
+
+    @action(detail=True, methods=("post",), url_path="save-purchase-proposal", permission_classes=(IsOwner,))
+    def save_purchase_proposal(self, request, pk=None):
+        analysis = save_ocr_purchase_proposal(
+            analysis=self.get_object(), review=proposal_from_request(request),
+            saved_by=request.user,
+        )
+        return Response(self.get_serializer(analysis).data)
+
+    @action(detail=True, methods=("post",), url_path="apply-purchase-proposal", permission_classes=(IsOwner,))
+    def apply_purchase_proposal(self, request, pk=None):
+        result = apply_ocr_purchase_proposal(
+            analysis=self.get_object(), review=proposal_from_request(request),
+            supplier_id=request.data.get("supplier"),
+            location_id=request.data.get("location"), applied_by=request.user,
+        )
+        return Response({
+            "document": str(result["document"].pk),
+            "invoice": str(result["invoice"].pk),
+            "receipt": str(result["receipt"].pk),
+        }, status=201)
+
+    base.save_purchase_proposal = save_purchase_proposal
+    base.apply_purchase_proposal = apply_purchase_proposal
+    return base
+
+
 def return_viewset(base):
     from returns.services import cancel_draft_return, confirm_customer_return, create_customer_return, set_return_line
     from sales.models import Sale, SaleLine
