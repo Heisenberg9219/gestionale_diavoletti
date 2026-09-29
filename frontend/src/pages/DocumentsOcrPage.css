@@ -175,6 +175,26 @@
 .ocr-review-feedback.error { background: #fff0f2; color: #ae0019; }
 .ocr-review-feedback.success { background: #edf9f1; color: #167444; }
 
+.ocr-field-error {
+  display: block;
+  margin-top: 4px;
+  color: #b00019;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.ocr-invalid > input,
+.ocr-invalid > select,
+.ocr-invalid .select-with-add > select,
+.ocr-control.ocr-invalid > input,
+.ocr-control.ocr-invalid > select {
+  border-color: #c9001d;
+  background: #fff8f8;
+}
+
+.ocr-control { display: grid; min-width: 0; }
+
 .ocr-review-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -306,7 +326,6 @@
 .ocr-markup-action { border: 0; padding: 5px 0; background: transparent; color: #b70018; font: inherit; font-size: 11px; cursor: pointer; text-align: left; }
 .ocr-variant-size-row { align-items: start; }
 .ocr-variant-size-row .ocr-remove-size { margin-top: 18px; }
-.ocr-review-feedback.error { position: sticky; top: 0; z-index: 2; max-height: 160px; overflow-y: auto; white-space: pre-line; line-height: 1.5; }
 .ocr-review-modal footer { justify-content: flex-end; }
 @media (max-width: 800px) {
   .ocr-review-modal footer span { flex-wrap: wrap; }
