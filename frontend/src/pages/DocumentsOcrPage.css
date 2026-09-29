@@ -210,6 +210,17 @@
   font-weight: 800;
 }
 
+.ocr-catalog-defaults {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 3px;
+  padding-top: 6px;
+  border-top: 1px solid #eeeaea;
+}
+
+.ocr-catalog-defaults strong { font-size: 13px; }
+.ocr-catalog-defaults span { color: #777176; font-size: 12px; }
+
 .ocr-review-summary input,
 .ocr-review-summary select,
 .ocr-review-line input,

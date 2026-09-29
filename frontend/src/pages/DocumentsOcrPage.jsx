@@ -28,6 +28,9 @@ function issueFields(issue) {
   if (text.includes("numero fattura")) return ["invoice_number"];
   if (text.includes("fornitore")) return ["supplier_id"];
   if (text.includes("sede")) return ["location_id"];
+  if (text.includes("marca predefinita")) return ["brand_id"];
+  if (text.includes("tipo collezione")) return ["season_type"];
+  if (text.includes("anno collezione")) return ["season_year"];
   if (text.includes("data, imponibile, aliquota iva e totale")) return ["invoice_date", "taxable_amount", "tax_rate", "total_amount"];
   if (text.includes("nome e sku")) return ["product_name", "sku"];
   if (text.includes("nome identico") || text.includes("esiste già un articolo con nome") || text.includes("lunghezza massima")) return ["product_name"];
@@ -76,6 +79,9 @@ function makeReview(analysis, catalog = { taxes: [] }, markup = "") {
     invoice_date: saved.invoice_date ?? proposal.invoice_date ?? "",
     supplier_id: saved.supplier_id ?? saved.supplier ?? "",
     location_id: saved.location_id ?? saved.location ?? "",
+    brand_id: saved.brand_id ?? "",
+    season_type: saved.season_type ?? "",
+    season_year: String(saved.season_year ?? new Date().getFullYear()),
     taxable_amount: saved.taxable_amount ?? proposal.taxable_amount ?? "",
     tax_rate: saved.tax_rate !== undefined && saved.tax_rate !== "" ? saved.tax_rate : defaultTax?.percentage ?? "",
     total_amount: saved.total_amount ?? proposal.total_amount ?? "",
@@ -149,7 +155,7 @@ export default function DocumentsOcrPage() {
   const addVariantSize = (itemIndex) => changeReview((current) => ({ ...current, items: current.items.map((item, index) => index === itemIndex ? { ...item, new_variant: { ...item.new_variant, variants: [...(item.new_variant.variants || []), { size_id: "", sku: "", barcode: "", quantity: "", sale_price: amount(item.unit_price) > 0 && amount(markup) > 0 ? money(amount(item.unit_price) * amount(markup)) : "" }] } } : item) }));
   const removeVariantSize = (itemIndex, variantIndex) => changeReview((current) => ({ ...current, items: current.items.map((item, index) => index === itemIndex ? { ...item, new_variant: { ...item.new_variant, variants: item.new_variant.variants.filter((_, position) => position !== variantIndex) } } : item) }));
   async function addCategory(itemIndex) { const name = window.prompt("Nome della nuova categoria")?.trim(); if (!name) return; const code = `${name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 20) || "CATEGORIA"}_${Date.now().toString().slice(-5)}`; try { const category = await request("/catalog/categories/", { method: "POST", body: JSON.stringify({ code, name }) }); setCatalog((current) => ({ ...current, categories: [...current.categories, category] })); updateNewVariant(itemIndex, "category_id", category.id); } catch (error) { setReviewError(error.message); } }
-  async function addBrand(itemIndex) { const name = window.prompt("Nome della nuova marca")?.trim(); if (!name) return; const code = `${name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 20) || "MARCA"}_${Date.now().toString().slice(-5)}`; try { const brand = await request("/catalog/brands/", { method: "POST", body: JSON.stringify({ code, name }) }); setCatalog((current) => ({ ...current, brands: [...current.brands, brand] })); updateNewVariant(itemIndex, "brand_id", brand.id); } catch (error) { setReviewError(error.message); } }
+  async function addBrand(itemIndex = null) { const name = window.prompt("Nome della nuova marca")?.trim(); if (!name) return; const code = `${name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 20) || "MARCA"}_${Date.now().toString().slice(-5)}`; try { const brand = await request("/catalog/brands/", { method: "POST", body: JSON.stringify({ code, name }) }); setCatalog((current) => ({ ...current, brands: [...current.brands, brand] })); if (itemIndex === null) updateReview("brand_id", brand.id); else updateNewVariant(itemIndex, "brand_id", brand.id); } catch (error) { setReviewError(error.message); } }
   async function addColor(itemIndex) { const name = window.prompt("Nome del nuovo colore")?.trim(); if (!name) return; const code = `${name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 20) || "COLORE"}_${Date.now().toString().slice(-5)}`; try { const color = await request("/catalog/colors/", { method: "POST", body: JSON.stringify({ code, name }) }); setCatalog((current) => ({ ...current, colors: [...current.colors, color] })); updateNewVariant(itemIndex, "color_id", color.id); } catch (error) { setReviewError(error.message); } }
   const reviewSubtotal = review?.items.filter((item) => item.accepted).reduce((total, item) => total + lineTotal(item), 0) || 0;
   const reviewTax = reviewSubtotal * amount(review?.tax_rate) / 100;
@@ -215,6 +221,10 @@ export default function DocumentsOcrPage() {
             <label className={fieldIssues(null, "taxable_amount").length ? "ocr-invalid" : ""}>Imponibile articoli<input inputMode="decimal" value={review.taxable_amount} onChange={(event) => updateReview("taxable_amount", event.target.value)} /><FieldErrors issues={fieldIssues(null, "taxable_amount")} /></label>
             <label className={fieldIssues(null, "tax_rate").length ? "ocr-invalid" : ""}>IVA %<input inputMode="decimal" value={review.tax_rate} onChange={(event) => updateReview("tax_rate", event.target.value)} /><FieldErrors issues={fieldIssues(null, "tax_rate")} /></label>
             <label className={fieldIssues(null, "total_amount").length ? "ocr-invalid" : ""}>Totale fattura<input inputMode="decimal" value={review.total_amount} onChange={(event) => updateReview("total_amount", event.target.value)} /><FieldErrors issues={fieldIssues(null, "total_amount")} /></label>
+            <div className="ocr-catalog-defaults"><strong>Dati catalogo per i nuovi articoli</strong><span>Verranno applicati a tutti gli articoli creati da questa fattura.</span></div>
+            <label className={fieldIssues(null, "brand_id").length ? "ocr-invalid" : ""}>Marca predefinita<span className="select-with-add"><select value={review.brand_id} onChange={(event) => updateReview("brand_id", event.target.value)}><option value="">Seleziona marca</option>{catalog.brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}</select><button type="button" onClick={() => addBrand()} title="Aggiungi marca"><Plus size={16} /></button></span><FieldErrors issues={fieldIssues(null, "brand_id")} /></label>
+            <label className={fieldIssues(null, "season_type").length ? "ocr-invalid" : ""}>Tipo collezione<select value={review.season_type} onChange={(event) => updateReview("season_type", event.target.value)}><option value="">Seleziona collezione</option><option value="SPRING_SUMMER">Primavera/Estate</option><option value="AUTUMN_WINTER">Autunno/Inverno</option></select><FieldErrors issues={fieldIssues(null, "season_type")} /></label>
+            <label className={fieldIssues(null, "season_year").length ? "ocr-invalid" : ""}>Anno collezione<input type="number" min="2000" max="2100" value={review.season_year} onChange={(event) => updateReview("season_year", event.target.value)} /><FieldErrors issues={fieldIssues(null, "season_year")} /></label>
           </div>
           <div className="ocr-review-lines"><div className="ocr-review-heading"><span>Incl.</span><span>Descrizione</span><span>Articolo in catalogo</span><span>Qta</span><span>Costo acquisto</span><span>Totale</span><span /></div>
           {review.items.length ? review.items.map((item, index) => <div key={index} id={`ocr-row-${index}`} className={`ocr-review-row${item.accepted ? "" : " is-discarded"}`}>

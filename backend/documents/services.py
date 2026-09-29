@@ -224,7 +224,7 @@ def _proposal_supplier(*, supplier_id, supplier_name, vat_number):
 
 
 def _proposal_product(*, item, new_variant):
-    from catalog.models import Brand, Product, ProductVariant
+    from catalog.models import Brand, Product, Season
     from core.models import TaxRate
 
     product_id = new_variant.get("product_id")
@@ -237,10 +237,30 @@ def _proposal_product(*, item, new_variant):
     tax_rate = TaxRate.objects.filter(is_active=True, pk=new_variant.get("tax_rate_id")).first()
     if tax_rate is None:
         raise ValidationError("Configurare un'aliquota IVA attiva prima di creare un articolo.")
-    brand_id = new_variant.get("brand_id") or None
+    catalog_defaults = item.get("catalog_defaults") or {}
+    brand_id = new_variant.get("brand_id") or catalog_defaults.get("brand_id") or None
     if brand_id and not Brand.objects.filter(pk=brand_id, is_active=True).exists():
         raise ValidationError("La marca selezionata non è più disponibile.")
-    product = Product(code=_new_code("OCR-PRD", uuid4()), name=product_name, brand_id=brand_id, category_id=category_id, tax_rate=tax_rate)
+    season_type = catalog_defaults.get("season_type")
+    season_year = catalog_defaults.get("season_year")
+    try:
+        season_year = int(season_year)
+    except (TypeError, ValueError) as error:
+        raise ValidationError("Indicare un anno collezione valido.") from error
+    if season_type not in {Season.Type.SPRING_SUMMER, Season.Type.AUTUMN_WINTER}:
+        raise ValidationError("Selezionare il tipo collezione per i nuovi articoli.")
+    if not 2000 <= season_year <= 2100:
+        raise ValidationError("L'anno collezione deve essere compreso tra 2000 e 2100.")
+    season = Season.objects.filter(season_type=season_type, year=season_year).first()
+    if season is None:
+        prefix = "PE" if season_type == Season.Type.SPRING_SUMMER else "AI"
+        season = Season.objects.create(
+            code=f"{prefix}-{season_year}",
+            name=f"{Season.Type(season_type).label} {season_year}",
+            season_type=season_type,
+            year=season_year,
+        )
+    product = Product(code=_new_code("OCR-PRD", uuid4()), name=product_name, brand_id=brand_id, category_id=category_id, season=season, tax_rate=tax_rate)
     product.full_clean()
     product.save()
     return product
@@ -359,6 +379,11 @@ def apply_ocr_purchase_proposal(*, analysis, review, supplier_id=None, location_
     ).exists():
         raise ValidationError("Esiste già una fattura con questo numero per il fornitore selezionato.")
 
+    catalog_defaults = {
+        "brand_id": review.get("brand_id"),
+        "season_type": review.get("season_type"),
+        "season_year": review.get("season_year"),
+    }
     prepared = []
     for item in items:
         try:
@@ -367,7 +392,8 @@ def apply_ocr_purchase_proposal(*, analysis, review, supplier_id=None, location_
             raise ValidationError("Il costo unitario deve essere un numero valido.") from exc
         if unit_cost < 0:
             raise ValidationError("Il costo unitario non può essere negativo.")
-        for variant, quantity, sale_price in _proposal_variants(item=item, user=applied_by):
+        item_with_defaults = dict(item, catalog_defaults=catalog_defaults)
+        for variant, quantity, sale_price in _proposal_variants(item=item_with_defaults, user=applied_by):
             prepared.append((dict(item, sale_price=str(sale_price)), variant, quantity, unit_cost))
 
     taxable_amount = sum((_round_money(quantity * cost) for _, _, quantity, cost in prepared), Decimal("0.00"))
@@ -778,6 +804,20 @@ def validate_ocr_review(review):
     included = [item for item in items if isinstance(item, dict) and item.get("accepted", True)]
     if not included:
         errors.append("Includi almeno una riga.")
+    creates_new_products = any(
+        not item.get("variant_id") and item.get("new_product") and not item["new_product"].get("product_id")
+        for item in included
+    )
+    if creates_new_products:
+        reference(Brand, review.get("brand_id"), "Marca predefinita")
+        if review.get("season_type") not in {"SPRING_SUMMER", "AUTUMN_WINTER"}:
+            errors.append("Tipo collezione: seleziona un valore.")
+        try:
+            season_year = int(review.get("season_year"))
+            if not 2000 <= season_year <= 2100:
+                raise ValueError()
+        except (TypeError, ValueError):
+            errors.append("Anno collezione: indica un anno tra 2000 e 2100.")
     try:
         line_subtotal = sum((_round_money(_positive_integer(item.get("quantity"), "quantity") * _money(item.get("unit_price"), "unit_price")) for item in included), Decimal("0"))
         if line_subtotal != _money(review.get("taxable_amount"), "Imponibile"):
