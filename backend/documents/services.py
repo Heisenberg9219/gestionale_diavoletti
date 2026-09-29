@@ -851,7 +851,7 @@ def save_ocr_review(*, attachment, analysis_id, review):
         raise ValidationError("La proposta è già stata importata e non è modificabile.")
     if not isinstance(review, dict) or not isinstance(review.get("items"), list) or any(not isinstance(item, dict) for item in review["items"]):
         raise ValidationError("La proposta deve contenere un elenco di righe valido.")
-    review = dict(review, status="SAVED", conflicts=validate_ocr_review(review))
+    review = dict(review, status="DRAFT", conflicts=validate_ocr_review(review))
     review.pop("receipt_id", None)
     review.pop("imported_at", None)
     analysis.proposed_data = dict(analysis.proposed_data, review=review)

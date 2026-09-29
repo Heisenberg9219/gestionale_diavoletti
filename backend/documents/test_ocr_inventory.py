@@ -99,10 +99,10 @@ class OcrInventoryTests(TestCase):
         self.assertEqual(ProductVariant.objects.count(), 1)
         self.assertEqual(StockBalance.objects.get().variant, variant)
 
-    def test_duplicates_sku_barcode_similar_name_block_import(self):
+    def test_duplicates_sku_barcode_and_exact_name_block_import(self):
         variant = self.existing_variant()
         ProductBarcode.objects.create(variant=variant, code='DUPLICATE', barcode_type='OTHER', source='MANUFACTURER')
-        for field, value in [('sku', 'exist'), ('barcode', 'DUPLICATE'), ('name', 'Abito primaverra')]:
+        for field, value in [('sku', 'exist'), ('barcode', 'DUPLICATE'), ('name', 'Abito primavera')]:
             with self.subTest(field=field):
                 original = self.review['items'][0]['new_product'][field]
                 self.review['items'][0]['new_product'][field] = value
@@ -112,6 +112,12 @@ class OcrInventoryTests(TestCase):
                     self.run_import()
                 self.assertFalse(GoodsReceipt.objects.exists())
                 self.review['items'][0]['new_product'][field] = original
+
+    def test_similar_product_names_with_different_codes_are_allowed(self):
+        self.existing_variant()
+        self.review['items'][0]['new_product']['name'] = 'Abito primaverra'
+        errors = validate_ocr_review(self.review)
+        self.assertFalse(any('esiste già un articolo con nome' in error for error in errors))
 
     def test_internal_duplicates_and_missing_fields(self):
         self.review['items'].append(deepcopy(self.review['items'][0]))
@@ -135,7 +141,7 @@ class OcrInventoryTests(TestCase):
         self.assertFalse(StockMovement.objects.exists())
         self.assertFalse(StockBalance.objects.exists())
         self.analysis.refresh_from_db()
-        self.assertEqual(self.analysis.proposed_data['review']['status'], 'SAVED')
+        self.assertEqual(self.analysis.proposed_data['review']['status'], 'DRAFT')
 
     def test_double_import_and_edit_imported_proposal_blocked(self):
         self.save()

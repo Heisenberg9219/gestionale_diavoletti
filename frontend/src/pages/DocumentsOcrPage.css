@@ -231,7 +231,7 @@
 .ocr-review-heading,
 .ocr-review-line {
   display: grid;
-  grid-template-columns: 58px minmax(160px, 1.5fr) minmax(180px, 1.5fr) 72px 98px 98px;
+  grid-template-columns: 58px minmax(160px, 1.5fr) minmax(180px, 1.5fr) 72px 98px 98px 30px;
   align-items: center;
   gap: 9px;
   padding: 11px 26px;
@@ -247,6 +247,8 @@
 
 .ocr-review-row { border-top: 1px solid #eeeaea; }
 .ocr-review-line > label { display: grid; place-items: center; }
+.ocr-inclusion { display: grid; justify-items: center; }
+.ocr-inclusion > label { display: grid; place-items: center; min-height: 38px; }
 .ocr-review-line > label input[type="checkbox"] {
   width: 18px;
   height: 18px;
@@ -263,6 +265,19 @@
 }
 .ocr-review-row.is-discarded { opacity: .45; }
 .ocr-review-empty { padding: 22px 26px; color: #817b80; }
+.ocr-remove-row {
+  width: 30px;
+  height: 30px;
+  align-self: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #b70018;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ocr-remove-row:hover { background: #fff0f2; }
 
 .ocr-new-variant {
   display: grid;
