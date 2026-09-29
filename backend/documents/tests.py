@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
+from django.utils import timezone
 from unittest.mock import patch
 
 from .models import BusinessDocument, DocumentAttachment, DocumentOcrAnalysis, DocumentType
@@ -249,6 +250,9 @@ class OcrPurchaseRegistrationTests(TestCase):
         self.analysis = DocumentOcrAnalysis.objects.create(attachment=attachment, provider=DocumentOcrAnalysis.Provider.AZURE_DOCUMENT_INTELLIGENCE, status=DocumentOcrAnalysis.Status.SUCCEEDED, proposed_data={"supplier_vat_number": "IT12345678901"})
 
     def test_approved_proposal_registers_invoice_and_loads_stock(self):
+        self.document.status = BusinessDocument.Status.REGISTERED
+        self.document.registered_at = timezone.now()
+        self.document.save(update_fields=("status", "registered_at", "updated_at"))
         result = apply_ocr_purchase_proposal(
             analysis=self.analysis,
             applied_by=self.user,

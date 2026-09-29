@@ -319,8 +319,20 @@ def apply_ocr_purchase_proposal(*, analysis, review, supplier_id=None, location_
         raise ValidationError("La proposta OCR non è disponibile.")
     if analysis.proposed_data.get("review", {}).get("status") in {"APPLIED", "IMPORTED"}:
         raise ValidationError("Questa proposta è già stata registrata.")
+    if document.status == BusinessDocument.Status.REGISTERED and not document.source_type and document.source_id is None:
+        # A previous UI action could finalize the empty OCR container before the
+        # invoice was confirmed. It is safe to reopen only this unlinked record.
+        previous_status = document.status
+        document.status = BusinessDocument.Status.DRAFT
+        document.registered_at = None
+        document.full_clean()
+        document.save(update_fields=("status", "registered_at", "updated_at"))
+        _record_status_change(
+            document=document, previous_status=previous_status,
+            changed_by=applied_by, reason="Ripristinato per registrazione OCR",
+        )
     if document.status != BusinessDocument.Status.DRAFT:
-        raise ValidationError("Il documento non è più una bozza modificabile.")
+        raise ValidationError("Il documento è già registrato e collegato a un'altra operazione.")
     if document.direction != DocumentType.Direction.INCOMING:
         raise ValidationError("La registrazione OCR è prevista per fatture ricevute.")
 
