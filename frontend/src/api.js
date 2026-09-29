@@ -59,8 +59,9 @@ export async function logout() {
 }
 
 export async function downloadFile(path, filename, options = {}) {
-  const headers = new Headers();
+  const headers = new Headers(options.headers);
   if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
+  if (options.body && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
   const response = await fetch(`${API_URL}${path}`, { ...options, headers, credentials: "include" });
   if (!response.ok) throw new Error("Non è stato possibile preparare il file CSV.");
   const url = URL.createObjectURL(await response.blob());
