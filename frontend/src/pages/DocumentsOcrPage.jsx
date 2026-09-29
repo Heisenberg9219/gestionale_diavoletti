@@ -30,7 +30,7 @@ function issueFields(issue) {
   if (text.includes("sede")) return ["location_id"];
   if (text.includes("data, imponibile, aliquota iva e totale")) return ["invoice_date", "taxable_amount", "tax_rate", "total_amount"];
   if (text.includes("nome e sku")) return ["product_name", "sku"];
-  if (text.includes("nome identico") || text.includes("lunghezza massima")) return ["product_name"];
+  if (text.includes("nome identico") || text.includes("esiste già un articolo con nome") || text.includes("lunghezza massima")) return ["product_name"];
   if (text.includes("categoria")) return ["category_id"];
   if (text.includes("aliquota iva")) return ["tax_rate_id"];
   if (text.includes("colore")) return ["color_id"];

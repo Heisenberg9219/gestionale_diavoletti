@@ -1,5 +1,4 @@
 from decimal import Decimal, ROUND_HALF_UP
-from difflib import SequenceMatcher
 from datetime import date
 from uuid import uuid4
 
@@ -831,10 +830,10 @@ def validate_ocr_review(review):
         if barcode and (barcode.casefold() in barcodes or ProductBarcode.objects.filter(code__iexact=barcode).exists()):
             errors.append(f"{prefix}: barcode già presente. Associa la variante esistente.")
         normalized = " ".join(name.casefold().split())
-        matches = [other for other in names if SequenceMatcher(None, normalized, " ".join(other.casefold().split())).ratio() >= .88]
+        matches = [other for other in names if normalized == " ".join(other.casefold().split())]
         group = data.get("group", f"row-{index}")
         if name and matches and not data.get("product_id") and group not in groups:
-            errors.append(f"{prefix}: nome identico o simile a {matches[0]}. Associa una variante oppure precisa il nome del nuovo articolo.")
+            errors.append(f"{prefix}: esiste già un articolo con nome {matches[0]}. Se è lo stesso articolo, selezionalo dall'elenco; altrimenti usa un nome diverso.")
         if not data.get("product_id") and group not in groups:
             names.append(name)
         groups.add(group)
