@@ -224,7 +224,7 @@ def _proposal_supplier(*, supplier_id, supplier_name, vat_number):
 
 
 def _proposal_product(*, item, new_variant):
-    from catalog.models import Product, ProductVariant
+    from catalog.models import Brand, Product, ProductVariant
     from core.models import TaxRate
 
     product_id = new_variant.get("product_id")
@@ -237,7 +237,10 @@ def _proposal_product(*, item, new_variant):
     tax_rate = TaxRate.objects.filter(is_active=True, pk=new_variant.get("tax_rate_id")).first()
     if tax_rate is None:
         raise ValidationError("Configurare un'aliquota IVA attiva prima di creare un articolo.")
-    product = Product(code=_new_code("OCR-PRD", uuid4()), name=product_name, category_id=category_id, tax_rate=tax_rate)
+    brand_id = new_variant.get("brand_id") or None
+    if brand_id and not Brand.objects.filter(pk=brand_id, is_active=True).exists():
+        raise ValidationError("La marca selezionata non è più disponibile.")
+    product = Product(code=_new_code("OCR-PRD", uuid4()), name=product_name, brand_id=brand_id, category_id=category_id, tax_rate=tax_rate)
     product.full_clean()
     product.save()
     return product
@@ -698,7 +701,7 @@ def _inventory_review(review):
             for row in rows:
                 result["items"].append(dict(item, _source_row=index, variant_id="", quantity=row.get("quantity"), sale_price=row.get("sale_price"), new_product={
                     "name": data.get("product_name"), "product_id": data.get("product_id"),
-                    "category": data.get("category_id"), "tax_rate": data.get("tax_rate_id"),
+                    "category": data.get("category_id"), "brand": data.get("brand_id"), "tax_rate": data.get("tax_rate_id"),
                     "color": data.get("color_id"), "size": row.get("size_id"),
                     "sku": row.get("sku"), "barcode": row.get("barcode"), "group": index,
                 }))
@@ -724,7 +727,7 @@ class ReviewErrors(list):
 
 def validate_ocr_review(review):
     """Return blocking errors, including collisions inside the proposal itself."""
-    from catalog.models import Category, Color, Product, ProductBarcode, ProductVariant, Size
+    from catalog.models import Brand, Category, Color, Product, ProductBarcode, ProductVariant, Size
     from core.models import Location, TaxRate
     from suppliers.models import Supplier
     errors = ReviewErrors()
@@ -824,6 +827,8 @@ def validate_ocr_review(review):
         else:
             for model, key, label in ((Category, "category", "Categoria"), (TaxRate, "tax_rate", "Aliquota IVA")):
                 reference(model, data.get(key), f"{prefix}: {label}")
+            if data.get("brand"):
+                reference(Brand, data.get("brand"), f"{prefix}: Marca")
         reference(Size, data.get("size"), f"{prefix}: Taglia")
         combination = (data.get("product_id") or data.get("group", f"row-{index}"), data.get("size"), data.get("color") or None)
         if combination in combinations:

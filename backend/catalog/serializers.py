@@ -70,6 +70,11 @@ class ProductSerializer(ArchiveModelSerializer):
 
 class ProductVariantSerializer(ArchiveModelSerializer):
     product_name = serializers.CharField(source="product.name", read_only=True)
+    product_code = serializers.CharField(source="product.code", read_only=True)
+    brand_name = serializers.CharField(source="product.brand.name", read_only=True)
+    category_name = serializers.CharField(source="product.category.name", read_only=True)
+    season_name = serializers.CharField(source="product.season.name", read_only=True)
+    tax_rate_name = serializers.CharField(source="product.tax_rate.name", read_only=True)
     color_name = serializers.CharField(source="color.name", read_only=True)
     size_label = serializers.CharField(source="size.label", read_only=True)
     barcodes = serializers.SlugRelatedField(many=True, read_only=True, slug_field="code")
