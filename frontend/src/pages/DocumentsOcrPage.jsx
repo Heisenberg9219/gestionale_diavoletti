@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Eye, FileText, FileUp, LoaderCircle, Plus, ScanText, Search, Trash2, X } from "lucide-react";
 import { request } from "../api";
 import PaginatedRows from "../components/PaginatedRows";
@@ -126,6 +126,7 @@ export default function DocumentsOcrPage() {
   const [query, setQuery] = useState(""); const [formOpen, setFormOpen] = useState(false); const [form, setForm] = useState(blank()); const [saving, setSaving] = useState(false); const [message, setMessage] = useState(""); const [success, setSuccess] = useState(false);
   const [selectedDocuments, setSelectedDocuments] = useState([]); const [deletingDocuments, setDeletingDocuments] = useState(false);
   const [reviewAnalysis, setReviewAnalysis] = useState(null); const [review, setReview] = useState(null); const [reviewSaving, setReviewSaving] = useState(false); const [skuLoading, setSkuLoading] = useState(false); const [reviewAction, setReviewAction] = useState(""); const [reviewError, setReviewError] = useState(""); const [reviewNotice, setReviewNotice] = useState(""); const [validationIssues, setValidationIssues] = useState([]);
+  const reviewReferences = useRef(null);
   const proposalVersions = analyses
     .filter((entry) => entry.attachment === reviewAnalysis?.attachment && entry.status === "SUCCEEDED" && entry.proposed_data?.review)
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
@@ -135,16 +136,19 @@ export default function DocumentsOcrPage() {
   const load = async () => {
     setDocumentsLoading(true);
     const documentRequests = Promise.all([allPages("/documents/documents/"), allPages("/documents/types/?is_active=True"), allPages("/documents/attachments/"), allPages("/documents/ocr-analyses/")]);
-    const referenceRequests = Promise.all([allPages("/catalog/variants/?page_size=200"), allPages("/suppliers/suppliers/?page_size=200"), allPages("/core/locations/?is_active=True"), allPages("/catalog/products/?is_active=True&page_size=200"), allPages("/catalog/brands/?is_active=True&page_size=200"), allPages("/catalog/categories/?is_active=True&page_size=200"), allPages("/core/tax-rates/?is_active=True&page_size=100"), allPages("/catalog/colors/?is_active=True&page_size=200"), allPages("/catalog/sizes/?is_active=True&page_size=200"), allPages("/core/settings/")]);
     try {
       const [documentData, typeData, attachmentData, analysisData] = await documentRequests;
       setDocuments(list(documentData)); setTypes(list(typeData)); setAttachments(list(attachmentData)); setAnalyses(list(analysisData));
     } catch (error) { notice(`Impossibile caricare i documenti: ${error.message}`, false); }
     finally { setDocumentsLoading(false); }
-    try {
-      const [variantData, supplierData, locationData, productData, brandData, categoryData, taxData, colorData, sizeData, settingsData] = await referenceRequests;
-      setVariants(list(variantData)); setSuppliers(list(supplierData)); setLocations(list(locationData)); setCatalog({ products: list(productData), brands: list(brandData), categories: list(categoryData), taxes: list(taxData), colors: list(colorData), sizes: list(sizeData) }); setMarkup(list(settingsData)[0]?.default_markup || "");
-    } catch (error) { notice(`Alcuni dati della proposta OCR non sono disponibili: ${error.message}`, false); }
+  };
+  const loadReviewReferences = async () => {
+    if (reviewReferences.current) return reviewReferences.current;
+    const [variantData, supplierData, locationData, productData, brandData, categoryData, taxData, colorData, sizeData, settingsData] = await Promise.all([allPages("/catalog/variants/?page_size=200"), allPages("/suppliers/suppliers/?page_size=200"), allPages("/core/locations/?is_active=True"), allPages("/catalog/products/?is_active=True&page_size=200"), allPages("/catalog/brands/?is_active=True&page_size=200"), allPages("/catalog/categories/?is_active=True&page_size=200"), allPages("/core/tax-rates/?is_active=True&page_size=100"), allPages("/catalog/colors/?is_active=True&page_size=200"), allPages("/catalog/sizes/?is_active=True&page_size=200"), allPages("/core/settings/")]);
+    const data = { variants: list(variantData), suppliers: list(supplierData), locations: list(locationData), catalog: { products: list(productData), brands: list(brandData), categories: list(categoryData), taxes: list(taxData), colors: list(colorData), sizes: list(sizeData) }, markup: list(settingsData)[0]?.default_markup || "" };
+    reviewReferences.current = data;
+    setVariants(data.variants); setSuppliers(data.suppliers); setLocations(data.locations); setCatalog(data.catalog); setMarkup(data.markup);
+    return data;
   };
   useEffect(() => { load(); }, []);
   useEffect(() => { if (!message) return undefined; const timer = setTimeout(() => setMessage(""), 4000); return () => clearTimeout(timer); }, [message]);
@@ -204,11 +208,13 @@ export default function DocumentsOcrPage() {
   }
   async function openProposal(analysis) {
     setReviewAnalysis(analysis); setReviewError(""); setReviewNotice(""); setValidationIssues([]);
-    const initial = makeReview(analysis, catalog, markup);
-    setReview(initial); setSkuLoading(true);
-    try { changeReview(await assignReservedSkus(initial)); }
-    catch (error) { setReviewError(`Impossibile generare gli SKU: ${error.message}`); }
-    finally { setSkuLoading(false); }
+    setReview(makeReview(analysis, catalog, markup)); setReviewAction("Caricamento dei dati per la proposta OCR…"); setSkuLoading(true);
+    try {
+      const references = await loadReviewReferences();
+      const initial = makeReview(analysis, references.catalog, references.markup);
+      changeReview(await assignReservedSkus(initial));
+    } catch (error) { setReviewError(`Impossibile preparare la proposta: ${error.message}`); }
+    finally { setSkuLoading(false); setReviewAction(""); }
   }
   const fieldIssues = (row, field) => validationIssues.filter((issue) => (issue.row ?? null) === row && issueFields(issue).includes(field));
   const updateReview = (key, value) => { setValidationIssues((current) => current.filter((issue) => !((issue.row ?? null) === null && issueFields(issue).includes(key)))); changeReview((current) => ({ ...current, [key]: value })); };

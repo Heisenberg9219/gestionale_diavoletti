@@ -371,7 +371,7 @@ def document_ocr_analysis_viewset(base):
             model = DocumentOcrAnalysis
             exclude = ("provider_response",)
 
-    def get_serializer_class():
+    def get_serializer_class(self):
         # La risposta grezza di Azure può essere molto grande e non serve alla UI.
         return OcrAnalysisSerializer
 
