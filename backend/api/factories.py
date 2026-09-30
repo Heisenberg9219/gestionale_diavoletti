@@ -68,6 +68,11 @@ def viewset_for(model, *, mode="owner", read_only=False):
             concrete = {field.name for field in model._meta.fields}
             for key, value in self.request.query_params.items():
                 if key not in ignored and key in concrete:
+                    if model._meta.get_field(key).get_internal_type() == "BooleanField":
+                        try:
+                            value = serializers.BooleanField().run_validation(value)
+                        except serializers.ValidationError as exc:
+                            raise serializers.ValidationError({key: exc.detail}) from exc
                     queryset = queryset.filter(**{key: value})
             return queryset
 
