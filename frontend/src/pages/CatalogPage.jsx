@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Download, PackagePlus, Plus, Search, Trash2, X } from "lucide-react";
 import { downloadFile, request } from "../api";
+import PaginationControls from "../components/PaginationControls";
 import "../products.css";
 
 const list = (data) => data?.results || data || [];
@@ -20,6 +21,9 @@ export default function CatalogPage() {
   const [items, setItems] = useState([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [total, setTotal] = useState(0);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(blank);
@@ -32,12 +36,12 @@ export default function CatalogPage() {
   const [bulkSaving, setBulkSaving] = useState(false);
   const [bulkNotice, setBulkNotice] = useState("");
 
-  const load = () => {
+  const load = (requestedPage = page, requestedPageSize = pageSize) => {
     setLoading(true);
-    request(`/catalog/variants/?active=true&search=${encodeURIComponent(query)}&page_size=200`)
+    request(`/catalog/variants/?active=true&search=${encodeURIComponent(query)}&page=${requestedPage}&page_size=${requestedPageSize}`)
       .then((data) => {
         const rows = list(data);
-        setItems(rows);
+        setItems(rows); setTotal(data.count ?? rows.length); setPage(requestedPage);
         setSelected((current) => current.filter((id) => rows.some((item) => item.id === id)));
       })
       .catch((requestError) => setError(requestError.message))
@@ -45,7 +49,7 @@ export default function CatalogPage() {
   };
 
   useEffect(() => {
-    load();
+    load(1, 25);
     Promise.all([
       request("/catalog/brands/?active=true"), request("/catalog/categories/?active=true"),
       request("/catalog/seasons/?active=true"), request("/core/tax-rates/?is_active=true"),
@@ -60,6 +64,8 @@ export default function CatalogPage() {
   const close = () => { if (!saving && !skuLoading) { setOpen(false); setEditing(null); setError(""); } };
   const toggleSelected = (id) => setSelected((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
   const selectedAll = items.length > 0 && items.every((item) => selected.includes(item.id));
+  const changePage = (nextPage) => load(nextPage);
+  const changePageSize = (nextPageSize) => load(1, nextPageSize);
 
   async function ensureSeason(type, year) {
     if (!type) return null;
@@ -176,7 +182,7 @@ export default function CatalogPage() {
 
   return <section className="products-page">
     <div className="page-title-row"><div><p className="eyebrow">Prodotti</p><h2>Catalogo</h2><span>Clicca sul titolo dell’articolo per modificarlo.</span></div><button className="primary-action" onClick={openNew}><PackagePlus size={17} /> Nuovo articolo</button></div>
-    <form className="products-search" onSubmit={(event) => { event.preventDefault(); load(); }}><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cerca nome, SKU, barcode o codice prodotto" /><button>Ricerca</button></form>
+    <form className="products-search" onSubmit={(event) => { event.preventDefault(); load(1); }}><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cerca nome, SKU, barcode o codice prodotto" /><button>Ricerca</button></form>
     {error && !open && <p className="catalog-error">{error}</p>}
     {selected.length > 0 && <section className="catalog-bulk-panel">
       <div className="catalog-bulk-heading"><strong>{selected.length} righe selezionate</strong><span>Applica solo i campi compilati.</span></div>
@@ -196,6 +202,7 @@ export default function CatalogPage() {
       <div className="catalog-heading"><span><input aria-label="Seleziona tutte le righe" type="checkbox" checked={selectedAll} onChange={() => setSelected(selectedAll ? [] : items.map((item) => item.id))} /></span><span>Articolo</span><span>Marca</span><span>Categoria</span><span>Collezione</span><span>IVA</span><span>SKU</span><span>Variante</span><span>Barcode</span></div>
       {loading ? <p>Caricamento catalogo...</p> : items.map((item) => <div className="catalog-row" key={item.id}><span><input aria-label={`Seleziona ${item.product_name}`} type="checkbox" checked={selected.includes(item.id)} onChange={() => toggleSelected(item.id)} /></span><div><button className="catalog-title" onClick={() => openEdit(item)}>{item.product_name}</button><span>{item.product_code}</span></div><span>{item.brand_name || "—"}</span><span>{item.category_name || "—"}</span><span>{item.season_name || "—"}</span><span>{item.tax_rate_name || "—"}</span><b>{item.sku}</b><span>{[item.color_name, item.size_label].filter(Boolean).join(" · ") || "—"}</span><span>{item.barcodes?.join(", ") || "—"}</span></div>)}
     </article>
+    {!loading && <PaginationControls page={page} pageSize={pageSize} total={total} onPageChange={changePage} onPageSizeChange={changePageSize} />}
     {open && <div className="catalog-modal-layer"><button className="catalog-modal-backdrop" onClick={close} /><form className="catalog-modal" onSubmit={save}><header><div><p className="eyebrow">Catalogo</p><h3>{editing ? "Modifica articolo" : "Nuovo articolo"}</h3></div><button type="button" onClick={close}><X size={19} /></button></header>{error && <p className="catalog-error">{error}</p>}<div className="catalog-form-grid">
       <Field label="Codice prodotto"><input required value={form.code} onChange={(event) => update("code", event.target.value)} /></Field><Field label="Nome prodotto"><input required value={form.name} onChange={(event) => update("name", event.target.value)} /></Field>
       <Field label="Descrizione"><input value={form.description} onChange={(event) => update("description", event.target.value)} /></Field><Field label="Tipo collezione"><select value={form.season_type} onChange={(event) => update("season_type", event.target.value)}><option value="">Nessuna</option><option value="SPRING_SUMMER">Primavera/Estate</option><option value="AUTUMN_WINTER">Autunno/Inverno</option></select></Field>
