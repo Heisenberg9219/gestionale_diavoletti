@@ -188,7 +188,13 @@ def voucher_viewset(base):
     from vouchers.services import authorize_expired_voucher, cancel_voucher, change_voucher_expiry, get_voucher_ledger_balance, issue_voucher, redeem_voucher
     @action(detail=False, methods=("post",), permission_classes=(IsOwner,))
     def issue(self, request):
-        obj=issue_voucher(voucher_type=required(request.data,"voucher_type"), initial_amount=required(request.data,"initial_amount"), issued_by=request.user, code=request.data.get("code"), expires_at=moment(request.data,"expires_at"), holder_first_name=request.data.get("holder_first_name",""), holder_last_name=request.data.get("holder_last_name",""), source_type=request.data.get("source_type",""), source_id=request.data.get("source_id"), notifications_enabled=request.data.get("notifications_enabled",False), notes=request.data.get("notes",""))
+        from customers.models import Customer
+        customer_id = request.data.get("customer")
+        customer = None
+        if customer_id not in (None, ""):
+            customer_id = serializers.UUIDField().run_validation(customer_id)
+            customer = get_object_or_404(Customer, pk=customer_id, is_active=True)
+        obj=issue_voucher(customer=customer, voucher_type=required(request.data,"voucher_type"), initial_amount=required(request.data,"initial_amount"), issued_by=request.user, code=request.data.get("code"), expires_at=moment(request.data,"expires_at"), holder_first_name=request.data.get("holder_first_name",""), holder_last_name=request.data.get("holder_last_name",""), source_type=request.data.get("source_type",""), source_id=request.data.get("source_id"), notifications_enabled=request.data.get("notifications_enabled",False), notes=request.data.get("notes",""))
         return Response(self.get_serializer(obj).data,status=201)
     @action(detail=True, methods=("get",))
     def balance(self,request,pk=None): return Response({"balance":get_voucher_ledger_balance(voucher=self.get_object())})

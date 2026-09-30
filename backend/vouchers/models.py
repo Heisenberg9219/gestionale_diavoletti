@@ -33,6 +33,10 @@ class Voucher(UUIDTimeStampedModel):
     expires_at = models.DateTimeField()
     holder_first_name = models.CharField(max_length=120, blank=True)
     holder_last_name = models.CharField(max_length=120, blank=True)
+    customer = models.ForeignKey(
+        "customers.Customer", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="vouchers",
+    )
     source_type = models.CharField(max_length=64, blank=True)
     source_id = models.UUIDField(null=True, blank=True)
     issued_by = models.ForeignKey(

@@ -68,6 +68,7 @@ def issue_voucher(
     expires_at=None,
     holder_first_name="",
     holder_last_name="",
+    customer=None,
     source_type="",
     source_id=None,
     notifications_enabled=False,
@@ -85,6 +86,12 @@ def issue_voucher(
     if expires_at <= issued_at:
         raise ValidationError("La scadenza deve essere successiva all'emissione.")
 
+    if customer is not None:
+        if not customer.is_active:
+            raise ValidationError("Il cliente selezionato non è attivo.")
+        holder_first_name = customer.first_name
+        holder_last_name = customer.last_name
+
     voucher = Voucher(
         code=(code or _new_code(voucher_type)).strip().upper(),
         voucher_type=voucher_type,
@@ -94,6 +101,7 @@ def issue_voucher(
         expires_at=expires_at,
         holder_first_name=holder_first_name.strip(),
         holder_last_name=holder_last_name.strip(),
+        customer=customer,
         source_type=source_type.strip(),
         source_id=source_id,
         notifications_enabled=notifications_enabled,
