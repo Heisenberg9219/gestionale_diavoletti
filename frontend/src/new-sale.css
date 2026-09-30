@@ -15,7 +15,7 @@
 .product-matches span{color:#817b80;font-size:11px}
 .product-matches b{font-size:13px}
 .pos-hint{display:flex;align-items:flex-start;gap:10px;margin-top:23px;padding:14px;border-radius:10px;background:#f7f5f4;color:#777176;font-size:12px;line-height:1.45}
-.receipt-panel{display:grid;grid-template-rows:auto 1fr auto auto;padding:20px}
+.receipt-panel{display:grid;grid-template-rows:auto auto 1fr auto auto;padding:20px}
 .receipt-heading,.receipt-total{display:flex;align-items:center;justify-content:space-between}
 .receipt-heading p{margin:0;color:#817b80;font-size:11px;font-weight:800}
 .receipt-heading h3{margin:4px 0;font-size:18px}
@@ -35,7 +35,7 @@
 .receipt-total strong{font-size:23px}
 .receipt-pay{justify-content:center}
 .receipt-pay:disabled{opacity:.45;cursor:not-allowed}
-.sale-tools{display:flex;flex-wrap:wrap;gap:7px;margin:10px 0}.sale-tools button{border:1px solid #e2dddf;border-radius:7px;padding:7px 8px;background:#fff;color:#4d464c;font-size:11px;font-weight:800;cursor:pointer}.sale-tools button:hover{border-color:#ed001b;color:#b70018}.sale-selection-dialog{max-height:calc(100vh - 40px);overflow:auto}.customer-search{display:flex;gap:8px}.customer-search input{min-width:0;flex:1}.selection-row,.gift-item-row{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid #e8e3e4;border-radius:9px;padding:11px;background:#fff;text-align:left}.selection-row{cursor:pointer}.selection-row:hover{border-color:#ed001b}.selection-row strong,.gift-item-row strong{display:block;font-size:13px}.selection-row span,.gift-item-row span{display:block;margin-top:3px;color:#817b80;font-size:11px}.selection-empty{margin:0;color:#817b80;text-align:center;font-size:13px}.voucher-apply{display:flex;align-items:end;gap:8px}.voucher-apply label{flex:1}.voucher-message{margin:0;padding:10px 12px;border-radius:8px;background:#edf9f1;color:#167444;font-size:13px;font-weight:800}
+.sale-tools{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin:10px 0}.sale-tools button{height:31px;border:1px solid #e2dddf;border-radius:7px;padding:0 9px;background:#fff;color:#4d464c;font-size:11px;font-weight:800;cursor:pointer}.sale-tools button:hover{border-color:#ed001b;color:#b70018}.sale-selection-dialog{max-height:calc(100vh - 40px);overflow:auto}.customer-search{display:flex;gap:8px}.customer-search input{min-width:0;flex:1}.selection-row,.gift-item-row{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid #e8e3e4;border-radius:9px;padding:11px;background:#fff;text-align:left}.selection-row{cursor:pointer}.selection-row:hover{border-color:#ed001b}.selection-row strong,.gift-item-row strong{display:block;font-size:13px}.selection-row span,.gift-item-row span{display:block;margin-top:3px;color:#817b80;font-size:11px}.selection-empty{margin:0;color:#817b80;text-align:center;font-size:13px}.voucher-apply{display:flex;align-items:end;gap:8px}.voucher-apply label{flex:1}.voucher-message{margin:0;padding:10px 12px;border-radius:8px;background:#edf9f1;color:#167444;font-size:13px;font-weight:800}
 @media(max-width:850px){.pos-layout{grid-template-columns:1fr}
 .pos-products,.receipt-panel{min-height:auto}
 .receipt-panel{min-height:330px}
