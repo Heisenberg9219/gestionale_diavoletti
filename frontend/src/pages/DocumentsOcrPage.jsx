@@ -15,7 +15,6 @@ async function allPages(path) {
 }
 const today = () => new Date().toISOString().slice(0, 10);
 const blank = () => ({ document_type: "", title: "", number: "", document_date: today(), counterparty_name: "", file: null });
-const statusLabel = { DRAFT: "Bozza", REGISTERED: "Registrato", ISSUED: "Emesso", CANCELLED: "Annullato" };
 const directionLabel = { INCOMING: "Ricevuto", OUTGOING: "Emesso", INTERNAL: "Interno" };
 const date = (value) => value ? new Intl.DateTimeFormat("it-IT").format(new Date(`${value}T00:00:00`)) : "Non indicata";
 const amount = (value) => Number.parseFloat(String(value).replace(",", ".")) || 0;
@@ -57,11 +56,26 @@ function FieldErrors({ issues }) {
 
 function proposalLabel(analysis) {
   const status = analysis.proposed_data?.review?.status;
-  const label = ["APPLIED", "IMPORTED"].includes(status) ? "Caricata in magazzino" : status ? "Bozza" : "Analisi OCR";
+  const label = ["APPLIED", "IMPORTED"].includes(status) ? "Articoli caricati in magazzino" : status ? "Bozza" : "Scansionato";
   const timestamp = new Date(analysis.created_at);
   const day = timestamp.toLocaleDateString("it-IT");
   const time = timestamp.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
   return `${label} del ${day} alle ${time}`;
+}
+
+function ocrWorkflowStatus(analysis, attachment) {
+  const proposalStatus = analysis?.proposed_data?.review?.status;
+  if (["APPLIED", "IMPORTED"].includes(proposalStatus)) return { key: "stock-loaded", label: "Articoli caricati in magazzino" };
+  if (proposalStatus === "DRAFT") return { key: "draft", label: "Bozza" };
+  if (analysis?.status === "SUCCEEDED") return { key: "scanned", label: "Scansionato" };
+  if (analysis?.status === "FAILED") return { key: "failed", label: "OCR non riuscito" };
+  return { key: "pending", label: attachment ? "PDF caricato" : "Nessun PDF" };
+}
+
+function ocrProcessingLabel(analysis, attachment) {
+  if (analysis?.status === "SUCCEEDED") return "OCR completato";
+  if (analysis?.status === "FAILED") return "OCR non riuscito";
+  return attachment ? "PDF pronto" : "Nessun PDF";
 }
 
 function latest(items, attachment) {
@@ -125,6 +139,12 @@ export default function DocumentsOcrPage() {
     const timer = setTimeout(() => setReviewNotice(""), 4000);
     return () => clearTimeout(timer);
   }, [reviewNotice]);
+
+  useEffect(() => {
+    if (!reviewError) return undefined;
+    const timer = setTimeout(() => setReviewError(""), 4000);
+    return () => clearTimeout(timer);
+  }, [reviewError]);
 
   const visible = useMemo(() => documents.filter((document) => `${document.title} ${document.number} ${document.counterparty_name}`.toLowerCase().includes(query.toLowerCase())), [documents, query]);
   const typeFor = (id) => types.find((item) => item.id === id);
@@ -209,12 +229,20 @@ export default function DocumentsOcrPage() {
   const reviewTax = reviewSubtotal * amount(review?.tax_rate) / 100;
   const reviewTotal = reviewSubtotal + reviewTax;
   const recalculateAmounts = () => {
-    setValidationIssues((current) => current.filter((issue) => !((issue.row ?? null) === null && ["taxable_amount", "total_amount"].some((field) => issueFields(issue).includes(field)))));
-    changeReview((current) => {
-      const taxable = current.items.filter((item) => item.accepted).reduce((total, item) => total + lineTotal(item), 0);
-      const total = taxable + taxable * amount(current.tax_rate) / 100;
-      return { ...current, taxable_amount: money(taxable), total_amount: money(total) };
-    });
+    try {
+      if (!review?.items?.some((item) => item.accepted)) throw new Error("seleziona almeno una riga da includere");
+      setValidationIssues((current) => current.filter((issue) => !((issue.row ?? null) === null && ["taxable_amount", "total_amount"].some((field) => issueFields(issue).includes(field)))));
+      changeReview((current) => {
+        const taxable = current.items.filter((item) => item.accepted).reduce((total, item) => total + lineTotal(item), 0);
+        const total = taxable + taxable * amount(current.tax_rate) / 100;
+        return { ...current, taxable_amount: money(taxable), total_amount: money(total) };
+      });
+      setReviewError("");
+      setReviewNotice("Importi ricalcolati correttamente dalle righe incluse.");
+    } catch (error) {
+      setReviewNotice("");
+      setReviewError(`Il ricalcolo non è avvenuto: ${error.message}.`);
+    }
   };
 
   async function upload(event) { event.preventDefault(); if (!form.file) return notice("Seleziona un PDF da allegare.", false); setSaving(true); try { const type = typeFor(form.document_type); const document = await request("/documents/documents/", { method: "POST", body: JSON.stringify({ document_type: form.document_type, direction: type.direction, status: "DRAFT", number: form.number, document_date: form.document_date, title: form.title, taxable_amount: "0.00", tax_amount: "0.00", total_amount: "0.00", counterparty_name: form.counterparty_name }) }); const data = new FormData(); data.append("file", form.file); data.append("description", "Documento caricato per analisi OCR"); await request(`/documents/documents/${document.id}/upload-attachment/`, { method: "POST", body: data }); setFormOpen(false); setForm(blank()); notice("Documento e PDF caricati. Avvia l'OCR per preparare la proposta."); await load(); } catch (error) { notice(error.message, false); } finally { setSaving(false); } }
@@ -226,7 +254,7 @@ export default function DocumentsOcrPage() {
     try {
       const saved = await request(`/documents/ocr-analyses/${reviewAnalysis.id}/save-purchase-proposal/`, { method: "POST", body: JSON.stringify({ review: draftReview() }) });
       setReviewAnalysis(saved); changeReview(makeReview(saved, catalog, markup));
-      setReviewNotice("Proposta salvata. Le giacenze non sono state modificate."); await load();
+      setReviewNotice("Proposta salvata correttamente. Le giacenze non sono state modificate."); await load();
     } catch (error) { setReviewError(`La bozza non è stata salvata: ${error.message}`); } finally { setReviewSaving(false); }
   }
   async function saveReview() {
@@ -237,13 +265,14 @@ export default function DocumentsOcrPage() {
       if (validation.conflicts.length) {
         const issues = validation.issues?.length ? validation.issues : validation.conflicts.map((message) => ({ row: null, kind: "incomplete", message }));
         setValidationIssues(issues);
+        setReviewError("Il caricamento in magazzino non è avvenuto: correggi i campi evidenziati.");
         window.setTimeout(() => document.querySelector(".ocr-field-error")?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
         return;
       }
       await request(`/documents/ocr-analyses/${reviewAnalysis.id}/save-purchase-proposal/`, { method: "POST", body: JSON.stringify({ review: draftReview() }) });
       await request(`/documents/ocr-analyses/${reviewAnalysis.id}/apply-purchase-proposal/`, { method: "POST", body: JSON.stringify({ review: proposal, supplier: review.supplier_id, location: review.location_id }) });
-      setReviewAnalysis(null); setReview(null); notice("Fattura registrata, Catalogo e Magazzino aggiornati."); await load();
-    } catch (error) { setReviewError(`Il carico non è stato registrato: ${error.message}`); } finally { setReviewSaving(false); }
+      setReviewAnalysis(null); setReview(null); notice("Articoli caricati in magazzino correttamente."); await load();
+    } catch (error) { setReviewError(`Il caricamento in magazzino non è avvenuto: ${error.message}`); } finally { setReviewSaving(false); }
   }
 
   return <section className="products-page documents-page">
@@ -251,7 +280,7 @@ export default function DocumentsOcrPage() {
     {formOpen && <form className="document-form" onSubmit={upload}><div className="inventory-form-copy document-copy"><p className="eyebrow">Nuovo documento</p><h3>Carica un PDF</h3><span>L'OCR riconosce i dati della fattura dopo il caricamento.</span></div><label>Tipo documento<select required value={form.document_type} onChange={(event) => setForm({ ...form, document_type: event.target.value })}><option value="">Seleziona tipo</option>{types.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Titolo<input required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} /></label><label>Numero documento<input value={form.number} onChange={(event) => setForm({ ...form, number: event.target.value })} /></label><label>Data documento<input required type="date" value={form.document_date} onChange={(event) => setForm({ ...form, document_date: event.target.value })} /></label><label>Fornitore<input value={form.counterparty_name} onChange={(event) => setForm({ ...form, counterparty_name: event.target.value })} /></label><label>File PDF<span className="document-file-control"><input id="document-pdf" required type="file" accept="application/pdf" onChange={(event) => setForm({ ...form, file: event.target.files?.[0] || null })} /><button type="button" onClick={() => document.getElementById("document-pdf")?.click()}>Scegli file</button><span>{form.file?.name || "Nessun file selezionato"}</span></span></label><div className="inline-form-actions"><button type="button" className="secondary-action" onClick={() => setFormOpen(false)}>Annulla</button><button className="primary-action" disabled={saving}>{saving ? "Caricamento..." : "Carica"}</button></div></form>}
     {message && <p className={success ? "operation-success" : "catalog-error"}>{message}</p>}
     <div className="voucher-filters"><div className="products-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cerca documento, numero o fornitore" /></div></div>
-    <article className="products-list"><div className="document-heading"><span>Documento</span><span>Tipo</span><span>Data</span><span>PDF e OCR</span><span>Stato</span><span>Azioni</span></div>{!visible.length ? <div className="empty-product-state"><FileText size={28} /><strong>Nessun documento trovato</strong><span>Carica un PDF per costruire l'archivio documentale.</span></div> : visible.map((document) => { const analysis = analysisForDocument(document.id); const attachment = attachments.find((item) => item.id === analysis?.attachment) || attachmentFor(document.id); const reviewed = Boolean(analysis?.proposed_data?.review?.status); return <div className="document-row" key={document.id}><div><strong>{document.title}</strong><span>{document.number || "Numero non indicato"}{document.counterparty_name ? ` · ${document.counterparty_name}` : ""}</span></div><span>{typeFor(document.document_type)?.name || directionLabel[document.direction]}</span><span>{date(document.document_date)}</span><span>{analysis?.status === "SUCCEEDED" ? reviewed ? ["APPLIED", "IMPORTED"].includes(analysis.proposed_data.review.status) ? "Caricato in magazzino" : "Proposta salvata" : "OCR completato" : analysis?.status === "FAILED" ? "OCR non disponibile" : attachment ? "PDF pronto" : "Nessun PDF"}</span><em className={`document-status ${document.status.toLowerCase()}`}>{statusLabel[document.status] || document.status}</em><div className="document-actions">{analysis?.status === "SUCCEEDED" && <button title="Apri proposta OCR" onClick={() => openProposal(analysis)}><Eye size={16} /></button>}{attachment && <button title="Analizza fattura con OCR" onClick={() => analyze(attachment)}><ScanText size={16} /></button>}{attachment?.file && <a href={attachment.file} target="_blank" rel="noreferrer" title="Apri PDF"><FileUp size={16} /></a>}</div></div>; })}</article>
+    <article className="products-list"><div className="document-heading"><span>Documento</span><span>Tipo</span><span>Data</span><span>PDF e OCR</span><span>Stato</span><span>Azioni</span></div>{!visible.length ? <div className="empty-product-state"><FileText size={28} /><strong>Nessun documento trovato</strong><span>Carica un PDF per costruire l'archivio documentale.</span></div> : visible.map((document) => { const analysis = analysisForDocument(document.id); const attachment = attachments.find((item) => item.id === analysis?.attachment) || attachmentFor(document.id); const workflow = ocrWorkflowStatus(analysis, attachment); return <div className="document-row" key={document.id}><div><strong>{document.title}</strong><span>{document.number || "Numero non indicato"}{document.counterparty_name ? ` · ${document.counterparty_name}` : ""}</span></div><span>{typeFor(document.document_type)?.name || directionLabel[document.direction]}</span><span>{date(document.document_date)}</span><span>{ocrProcessingLabel(analysis, attachment)}</span><em className={`document-status ${workflow.key}`}>{workflow.label}</em><div className="document-actions">{analysis?.status === "SUCCEEDED" && <button title="Apri proposta OCR" onClick={() => openProposal(analysis)}><Eye size={16} /></button>}{attachment && <button title="Analizza fattura con OCR" onClick={() => analyze(attachment)}><ScanText size={16} /></button>}{attachment?.file && <a href={attachment.file} target="_blank" rel="noreferrer" title="Apri PDF"><FileUp size={16} /></a>}</div></div>; })}</article>
     {reviewAnalysis && review && <div className="ocr-review-layer" role="dialog" aria-modal="true">
       <button className="ocr-review-backdrop" aria-label="Chiudi" onClick={closeReview} />
       <section className="ocr-review-modal">

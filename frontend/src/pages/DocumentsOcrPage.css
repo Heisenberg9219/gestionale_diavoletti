@@ -96,9 +96,11 @@
   font-style: normal;
   font-weight: 900;
 }
-.document-status.registered,
-.document-status.issued { background: #edf9f1; color: #167444; }
-.document-status.cancelled { background: #fff0f2; color: #b00019; }
+.document-status.scanned,
+.document-status.draft,
+.document-status.pending { background: #f1eff0; color: #6f676c; }
+.document-status.stock-loaded { background: #edf9f1; color: #167444; }
+.document-status.failed { background: #fff0f2; color: #b00019; }
 .document-actions { display: flex !important; justify-content: flex-end; gap: 7px; }
 .document-actions button,
 .document-actions a {
