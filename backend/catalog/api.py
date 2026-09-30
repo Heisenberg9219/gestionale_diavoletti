@@ -12,7 +12,7 @@ from rest_framework.response import Response
 
 from api.viewsets import OwnerWriteReadViewSet
 
-from .models import Brand, Category, Color, Product, ProductBarcode, ProductVariant, Season, Size, SizeScale
+from .models import Brand, Category, Color, Product, ProductBarcode, ProductVariant, Season, Size, SizeScale, SkuSequence
 from .serializers import BrandSerializer, CategorySerializer, ColorSerializer, ProductBarcodeSerializer, ProductSerializer, ProductVariantSerializer, SeasonSerializer, SizeScaleSerializer, SizeSerializer
 
 
@@ -78,6 +78,29 @@ class ProductVariantViewSet(CatalogViewSet):
         if product := self.request.query_params.get("product"): queryset = queryset.filter(product_id=product)
         if barcode := self.request.query_params.get("barcode"): queryset = queryset.filter(barcodes__code=barcode, barcodes__is_active=True)
         return queryset.distinct()
+
+    @action(detail=False, methods=("post",), url_path="reserve-skus")
+    @transaction.atomic
+    def reserve_skus(self, request):
+        """Reserve globally unique progressive SKUs for an editable OCR proposal."""
+        try:
+            count = int(request.data.get("count", 1))
+        except (TypeError, ValueError):
+            return Response({"detail": "Il numero di SKU richiesti non è valido."}, status=400)
+        if not 1 <= count <= 200:
+            return Response({"detail": "Puoi generare da 1 a 200 SKU alla volta."}, status=400)
+        sequence, _ = SkuSequence.objects.get_or_create(key="GLOBAL")
+        sequence = SkuSequence.objects.select_for_update().get(pk=sequence.pk)
+        skus = []
+        next_number = sequence.last_number
+        while len(skus) < count:
+            next_number += 1
+            sku = f"SKU-{next_number:06d}"
+            if not ProductVariant.objects.filter(sku__iexact=sku).exists():
+                skus.append(sku)
+        sequence.last_number = next_number
+        sequence.save(update_fields=("last_number", "updated_at"))
+        return Response({"skus": skus})
 
     @action(detail=False, methods=("post",), url_path="bulk-update")
     @transaction.atomic

@@ -21,7 +21,7 @@ const date = (value) => value ? new Intl.DateTimeFormat("it-IT").format(new Date
 const amount = (value) => Number.parseFloat(String(value).replace(",", ".")) || 0;
 const money = (value) => amount(value).toFixed(2);
 const lineTotal = (item) => amount(item.quantity) * amount(item.unit_price);
-const defaultSku = (itemIndex, variantIndex) => `OCR-${String(itemIndex + 1).padStart(3, "0")}-${String(variantIndex + 1).padStart(3, "0")}`;
+const needsReservedSku = (value) => !value || /^OCR-\d{3}-\d{3}$/i.test(String(value));
 
 function issueFields(issue) {
   const text = String(issue.message || "").toLocaleLowerCase("it-IT");
@@ -98,7 +98,7 @@ function makeReview(analysis, catalog = { taxes: [] }, markup = "") {
           product_id: previous.product_id || "", product_name: previous.name ?? item.description ?? "",
           brand_id: previous.brand || "", category_id: previous.category || "", color_id: previous.color || "", ...stored,
           tax_rate_id: stored.tax_rate_id || previous.tax_rate || defaultTax?.id || "",
-          variants: (stored.variants || [{ size_id: stored.size_id || previous.size || "", sku: stored.sku || previous.sku || "", barcode: stored.barcode || previous.barcode || "", quantity: item.quantity ?? "", sale_price: stored.sale_price ?? item.sale_price ?? "" }]).map((variant, variantIndex) => ({ ...variant, sku: variant.sku || defaultSku(index, variantIndex), sale_price: variant.sale_price || defaultPrice(item.unit_price) })),
+          variants: (stored.variants || [{ size_id: stored.size_id || previous.size || "", sku: stored.sku || previous.sku || "", barcode: stored.barcode || previous.barcode || "", quantity: item.quantity ?? "", sale_price: stored.sale_price ?? item.sale_price ?? "" }]).map((variant) => ({ ...variant, sale_price: variant.sale_price || defaultPrice(item.unit_price) })),
         },
       };
     }),
@@ -108,7 +108,7 @@ function makeReview(analysis, catalog = { taxes: [] }, markup = "") {
 export default function DocumentsOcrPage() {
   const [documents, setDocuments] = useState([]); const [types, setTypes] = useState([]); const [attachments, setAttachments] = useState([]); const [analyses, setAnalyses] = useState([]); const [variants, setVariants] = useState([]); const [suppliers, setSuppliers] = useState([]); const [locations, setLocations] = useState([]); const [catalog, setCatalog] = useState({ products: [], brands: [], categories: [], taxes: [], colors: [], sizes: [] }); const [markup, setMarkup] = useState("");
   const [query, setQuery] = useState(""); const [formOpen, setFormOpen] = useState(false); const [form, setForm] = useState(blank()); const [saving, setSaving] = useState(false); const [message, setMessage] = useState(""); const [success, setSuccess] = useState(false);
-  const [reviewAnalysis, setReviewAnalysis] = useState(null); const [review, setReview] = useState(null); const [reviewSaving, setReviewSaving] = useState(false); const [reviewError, setReviewError] = useState(""); const [reviewNotice, setReviewNotice] = useState(""); const [validationIssues, setValidationIssues] = useState([]);
+  const [reviewAnalysis, setReviewAnalysis] = useState(null); const [review, setReview] = useState(null); const [reviewSaving, setReviewSaving] = useState(false); const [skuLoading, setSkuLoading] = useState(false); const [reviewError, setReviewError] = useState(""); const [reviewNotice, setReviewNotice] = useState(""); const [validationIssues, setValidationIssues] = useState([]);
   const proposalVersions = analyses
     .filter((entry) => entry.attachment === reviewAnalysis?.attachment && entry.status === "SUCCEEDED")
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
@@ -131,7 +131,36 @@ export default function DocumentsOcrPage() {
   const analysisForDocument = (documentId) => analyses
     .filter((analysis) => attachments.some((attachment) => attachment.id === analysis.attachment && attachment.document === documentId))
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
-  const closeReview = () => { if (reviewSaving) return; setReviewAnalysis(null); setReview(null); setReviewError(""); setReviewNotice(""); setValidationIssues([]); };
+  const closeReview = () => { if (reviewSaving || skuLoading) return; setReviewAnalysis(null); setReview(null); setReviewError(""); setReviewNotice(""); setValidationIssues([]); };
+  async function reserveSkus(count) {
+    const result = await request("/catalog/variants/reserve-skus/", { method: "POST", body: JSON.stringify({ count }) });
+    if (!Array.isArray(result.skus) || result.skus.length !== count) throw new Error("Non è stato possibile generare gli SKU progressivi.");
+    return result.skus;
+  }
+  async function assignReservedSkus(value) {
+    const targets = [];
+    value.items.forEach((item, itemIndex) => {
+      if (item.variant_id !== "__new__") return;
+      (item.new_variant.variants || []).forEach((variant, variantIndex) => {
+        if (needsReservedSku(variant.sku)) targets.push([itemIndex, variantIndex]);
+      });
+    });
+    if (!targets.length) return value;
+    const skus = await reserveSkus(targets.length);
+    let skuIndex = 0;
+    return { ...value, items: value.items.map((item, itemIndex) => ({ ...item, new_variant: { ...item.new_variant, variants: (item.new_variant.variants || []).map((variant, variantIndex) => {
+      const target = targets.some(([targetItem, targetVariant]) => targetItem === itemIndex && targetVariant === variantIndex);
+      return target ? { ...variant, sku: skus[skuIndex++] } : variant;
+    }) } })) };
+  }
+  async function openProposal(analysis) {
+    setReviewAnalysis(analysis); setReviewError(""); setReviewNotice(""); setValidationIssues([]);
+    const initial = makeReview(analysis, catalog, markup);
+    setReview(initial); setSkuLoading(true);
+    try { changeReview(await assignReservedSkus(initial)); }
+    catch (error) { setReviewError(`Impossibile generare gli SKU: ${error.message}`); }
+    finally { setSkuLoading(false); }
+  }
   const fieldIssues = (row, field) => validationIssues.filter((issue) => (issue.row ?? null) === row && issueFields(issue).includes(field));
   const updateReview = (key, value) => { setValidationIssues((current) => current.filter((issue) => !((issue.row ?? null) === null && issueFields(issue).includes(key)))); changeReview((current) => ({ ...current, [key]: value })); };
   const updateItem = (index, key, value) => { setValidationIssues((current) => current.filter((issue) => !((issue.row ?? null) === index && issueFields(issue).includes(key)))); changeReview((current) => ({ ...current, items: current.items.map((item, itemIndex) => {
@@ -153,7 +182,24 @@ export default function DocumentsOcrPage() {
   const updateNewVariant = (index, key, value) => { setValidationIssues((current) => current.filter((issue) => !((issue.row ?? null) === index && issueFields(issue).includes(key)))); changeReview((current) => ({ ...current, items: current.items.map((item, itemIndex) => itemIndex === index ? { ...item, new_variant: { ...item.new_variant, [key]: value } } : item) })); };
   const updateVariantDetail = (itemIndex, variantIndex, key, value) => { setValidationIssues((current) => current.filter((issue) => !((issue.row ?? null) === itemIndex && issueFields(issue).includes(key)))); changeReview((current) => ({ ...current, items: current.items.map((item, index) => index === itemIndex ? { ...item, new_variant: { ...item.new_variant, variants: (item.new_variant.variants || []).map((variant, variantPosition) => variantPosition === variantIndex ? { ...variant, [key]: value } : variant) } } : item) })); };
   const removeReviewItem = (itemIndex) => { setValidationIssues((current) => current.filter((issue) => (issue.row ?? null) !== itemIndex)); changeReview((current) => ({ ...current, items: current.items.filter((_, index) => index !== itemIndex) })); };
-  const addVariantSize = (itemIndex) => changeReview((current) => ({ ...current, items: current.items.map((item, index) => index === itemIndex ? { ...item, new_variant: { ...item.new_variant, variants: [...(item.new_variant.variants || []), { size_id: "", sku: defaultSku(itemIndex, (item.new_variant.variants || []).length), barcode: "", quantity: "", sale_price: amount(item.unit_price) > 0 && amount(markup) > 0 ? money(amount(item.unit_price) * amount(markup)) : "" }] } } : item) }));
+  async function chooseVariant(itemIndex, value) {
+    updateItem(itemIndex, "variant_id", value);
+    if (value !== "__new__") return;
+    const missing = (review.items[itemIndex]?.new_variant?.variants || []).filter((variant) => needsReservedSku(variant.sku)).length;
+    if (!missing) return;
+    setSkuLoading(true);
+    try {
+      const skus = await reserveSkus(missing); let skuIndex = 0;
+      changeReview((current) => ({ ...current, items: current.items.map((item, index) => index !== itemIndex ? item : { ...item, new_variant: { ...item.new_variant, variants: item.new_variant.variants.map((variant) => needsReservedSku(variant.sku) ? { ...variant, sku: skus[skuIndex++] } : variant) } }) }));
+    } catch (error) { setReviewError(`Impossibile generare gli SKU: ${error.message}`); } finally { setSkuLoading(false); }
+  }
+  async function addVariantSize(itemIndex) {
+    setSkuLoading(true);
+    try {
+      const [sku] = await reserveSkus(1);
+      changeReview((current) => ({ ...current, items: current.items.map((item, index) => index === itemIndex ? { ...item, new_variant: { ...item.new_variant, variants: [...(item.new_variant.variants || []), { size_id: "", sku, barcode: "", quantity: "", sale_price: amount(item.unit_price) > 0 && amount(markup) > 0 ? money(amount(item.unit_price) * amount(markup)) : "" }] } } : item) }));
+    } catch (error) { setReviewError(`Impossibile generare lo SKU: ${error.message}`); } finally { setSkuLoading(false); }
+  }
   const removeVariantSize = (itemIndex, variantIndex) => changeReview((current) => ({ ...current, items: current.items.map((item, index) => index === itemIndex ? { ...item, new_variant: { ...item.new_variant, variants: item.new_variant.variants.filter((_, position) => position !== variantIndex) } } : item) }));
   async function addCategory(itemIndex) { const name = window.prompt("Nome della nuova categoria")?.trim(); if (!name) return; const code = `${name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 20) || "CATEGORIA"}_${Date.now().toString().slice(-5)}`; try { const category = await request("/catalog/categories/", { method: "POST", body: JSON.stringify({ code, name }) }); setCatalog((current) => ({ ...current, categories: [...current.categories, category] })); updateNewVariant(itemIndex, "category_id", category.id); } catch (error) { setReviewError(error.message); } }
   async function addBrand(itemIndex = null) { const name = window.prompt("Nome della nuova marca")?.trim(); if (!name) return; const code = `${name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 20) || "MARCA"}_${Date.now().toString().slice(-5)}`; try { const brand = await request("/catalog/brands/", { method: "POST", body: JSON.stringify({ code, name }) }); setCatalog((current) => ({ ...current, brands: [...current.brands, brand] })); if (itemIndex === null) updateReview("brand_id", brand.id); else updateNewVariant(itemIndex, "brand_id", brand.id); } catch (error) { setReviewError(error.message); } }
@@ -204,15 +250,15 @@ export default function DocumentsOcrPage() {
     {formOpen && <form className="document-form" onSubmit={upload}><div className="inventory-form-copy document-copy"><p className="eyebrow">Nuovo documento</p><h3>Carica un PDF</h3><span>L'OCR riconosce i dati della fattura dopo il caricamento.</span></div><label>Tipo documento<select required value={form.document_type} onChange={(event) => setForm({ ...form, document_type: event.target.value })}><option value="">Seleziona tipo</option>{types.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Titolo<input required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} /></label><label>Numero documento<input value={form.number} onChange={(event) => setForm({ ...form, number: event.target.value })} /></label><label>Data documento<input required type="date" value={form.document_date} onChange={(event) => setForm({ ...form, document_date: event.target.value })} /></label><label>Fornitore<input value={form.counterparty_name} onChange={(event) => setForm({ ...form, counterparty_name: event.target.value })} /></label><label>File PDF<span className="document-file-control"><input id="document-pdf" required type="file" accept="application/pdf" onChange={(event) => setForm({ ...form, file: event.target.files?.[0] || null })} /><button type="button" onClick={() => document.getElementById("document-pdf")?.click()}>Scegli file</button><span>{form.file?.name || "Nessun file selezionato"}</span></span></label><div className="inline-form-actions"><button type="button" className="secondary-action" onClick={() => setFormOpen(false)}>Annulla</button><button className="primary-action" disabled={saving}>{saving ? "Caricamento..." : "Carica"}</button></div></form>}
     {message && <p className={success ? "operation-success" : "catalog-error"}>{message}</p>}
     <div className="voucher-filters"><div className="products-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cerca documento, numero o fornitore" /></div></div>
-    <article className="products-list"><div className="document-heading"><span>Documento</span><span>Tipo</span><span>Data</span><span>PDF e OCR</span><span>Stato</span><span>Azioni</span></div>{!visible.length ? <div className="empty-product-state"><FileText size={28} /><strong>Nessun documento trovato</strong><span>Carica un PDF per costruire l'archivio documentale.</span></div> : visible.map((document) => { const analysis = analysisForDocument(document.id); const attachment = attachments.find((item) => item.id === analysis?.attachment) || attachmentFor(document.id); const reviewed = Boolean(analysis?.proposed_data?.review?.status); return <div className="document-row" key={document.id}><div><strong>{document.title}</strong><span>{document.number || "Numero non indicato"}{document.counterparty_name ? ` · ${document.counterparty_name}` : ""}</span></div><span>{typeFor(document.document_type)?.name || directionLabel[document.direction]}</span><span>{date(document.document_date)}</span><span>{analysis?.status === "SUCCEEDED" ? reviewed ? ["APPLIED", "IMPORTED"].includes(analysis.proposed_data.review.status) ? "Caricato in magazzino" : "Proposta salvata" : "OCR completato" : analysis?.status === "FAILED" ? "OCR non disponibile" : attachment ? "PDF pronto" : "Nessun PDF"}</span><em className={`document-status ${document.status.toLowerCase()}`}>{statusLabel[document.status] || document.status}</em><div className="document-actions">{analysis?.status === "SUCCEEDED" && <button title="Apri proposta OCR" onClick={() => { setReviewAnalysis(analysis); setReviewError(""); setReviewNotice(""); setValidationIssues([]); changeReview(makeReview(analysis, catalog, markup)); }}><Eye size={16} /></button>}{attachment && <button title="Analizza fattura con OCR" onClick={() => analyze(attachment)}><ScanText size={16} /></button>}{attachment?.file && <a href={attachment.file} target="_blank" rel="noreferrer" title="Apri PDF"><FileUp size={16} /></a>}</div></div>; })}</article>
+    <article className="products-list"><div className="document-heading"><span>Documento</span><span>Tipo</span><span>Data</span><span>PDF e OCR</span><span>Stato</span><span>Azioni</span></div>{!visible.length ? <div className="empty-product-state"><FileText size={28} /><strong>Nessun documento trovato</strong><span>Carica un PDF per costruire l'archivio documentale.</span></div> : visible.map((document) => { const analysis = analysisForDocument(document.id); const attachment = attachments.find((item) => item.id === analysis?.attachment) || attachmentFor(document.id); const reviewed = Boolean(analysis?.proposed_data?.review?.status); return <div className="document-row" key={document.id}><div><strong>{document.title}</strong><span>{document.number || "Numero non indicato"}{document.counterparty_name ? ` · ${document.counterparty_name}` : ""}</span></div><span>{typeFor(document.document_type)?.name || directionLabel[document.direction]}</span><span>{date(document.document_date)}</span><span>{analysis?.status === "SUCCEEDED" ? reviewed ? ["APPLIED", "IMPORTED"].includes(analysis.proposed_data.review.status) ? "Caricato in magazzino" : "Proposta salvata" : "OCR completato" : analysis?.status === "FAILED" ? "OCR non disponibile" : attachment ? "PDF pronto" : "Nessun PDF"}</span><em className={`document-status ${document.status.toLowerCase()}`}>{statusLabel[document.status] || document.status}</em><div className="document-actions">{analysis?.status === "SUCCEEDED" && <button title="Apri proposta OCR" onClick={() => openProposal(analysis)}><Eye size={16} /></button>}{attachment && <button title="Analizza fattura con OCR" onClick={() => analyze(attachment)}><ScanText size={16} /></button>}{attachment?.file && <a href={attachment.file} target="_blank" rel="noreferrer" title="Apri PDF"><FileUp size={16} /></a>}</div></div>; })}</article>
     {reviewAnalysis && review && <div className="ocr-review-layer" role="dialog" aria-modal="true">
       <button className="ocr-review-backdrop" aria-label="Chiudi" onClick={closeReview} />
       <section className="ocr-review-modal">
         <header><div><p className="eyebrow">Proposta OCR</p><h3>Controlla e registra la fattura</h3></div><button type="button" title="Chiudi" onClick={closeReview}><X size={20} /></button></header>
         {reviewError && <p className="ocr-review-feedback error" role="alert">{reviewError}</p>}
         {reviewNotice && <p className="ocr-review-feedback success">{reviewNotice}</p>}
-        {proposalVersions.length > 1 && <div className="ocr-proposal-history"><label htmlFor="ocr-proposal-version">Versione della proposta</label><select id="ocr-proposal-version" disabled={reviewSaving} value={reviewAnalysis.id} onChange={(event) => { const selected = proposalVersions.find((entry) => entry.id === event.target.value); setReviewError(""); setReviewNotice(""); setValidationIssues([]); setReviewAnalysis(selected); changeReview(makeReview(selected, catalog, markup)); }}>{proposalVersions.map((entry) => <option key={entry.id} value={entry.id}>{proposalLabel(entry)}</option>)}</select></div>}
-        <fieldset className="ocr-review-fields" disabled={reviewSaving || imported}>
+        {proposalVersions.length > 1 && <div className="ocr-proposal-history"><label htmlFor="ocr-proposal-version">Versione della proposta</label><select id="ocr-proposal-version" disabled={reviewSaving || skuLoading} value={reviewAnalysis.id} onChange={(event) => { const selected = proposalVersions.find((entry) => entry.id === event.target.value); if (selected) openProposal(selected); }}>{proposalVersions.map((entry) => <option key={entry.id} value={entry.id}>{proposalLabel(entry)}</option>)}</select></div>}
+        <fieldset className="ocr-review-fields" disabled={reviewSaving || skuLoading || imported}>
           <div id="ocr-invoice-fields" className="ocr-review-summary">
             <label>Fornitore<input value={review.supplier_name} onChange={(event) => updateReview("supplier_name", event.target.value)} /></label>
             <label className={fieldIssues(null, "supplier_id").length ? "ocr-invalid" : ""}>Fornitore in rubrica<select value={review.supplier_id} onChange={(event) => updateReview("supplier_id", event.target.value)}><option value="">Seleziona fornitore</option>{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.business_name}</option>)}</select><FieldErrors issues={fieldIssues(null, "supplier_id")} /></label>
@@ -232,7 +278,7 @@ export default function DocumentsOcrPage() {
             <div className="ocr-review-line">
               <span className={fieldIssues(index, "accepted").length ? "ocr-inclusion ocr-invalid" : "ocr-inclusion"}><label><input type="checkbox" checked={item.accepted} onChange={(event) => updateItem(index, "accepted", event.target.checked)} /><span className="sr-only">Includi articolo</span></label><FieldErrors issues={fieldIssues(index, "accepted")} /></span>
               <input value={item.description} onChange={(event) => updateItem(index, "description", event.target.value)} />
-              <span className={fieldIssues(index, "variant_id").length ? "ocr-control ocr-invalid" : "ocr-control"}><select value={item.variant_id} onChange={(event) => updateItem(index, "variant_id", event.target.value)}><option value="">Seleziona articolo</option><option value="__new__">Crea articolo e variante</option>{variants.map((variant) => <option value={variant.id} key={variant.id}>{variant.product_name || "Articolo"} · {variant.sku}</option>)}</select><FieldErrors issues={fieldIssues(index, "variant_id")} /></span>
+              <span className={fieldIssues(index, "variant_id").length ? "ocr-control ocr-invalid" : "ocr-control"}><select value={item.variant_id} onChange={(event) => chooseVariant(index, event.target.value)}><option value="">Seleziona articolo</option><option value="__new__">Crea articolo e variante</option>{variants.map((variant) => <option value={variant.id} key={variant.id}>{variant.product_name || "Articolo"} · {variant.sku}</option>)}</select><FieldErrors issues={fieldIssues(index, "variant_id")} /></span>
               <span className={fieldIssues(index, "quantity").length ? "ocr-control ocr-invalid" : "ocr-control"}><input inputMode="numeric" value={item.quantity} onChange={(event) => updateItem(index, "quantity", event.target.value)} /><FieldErrors issues={fieldIssues(index, "quantity")} /></span>
               <span className={fieldIssues(index, "unit_price").length ? "ocr-control ocr-invalid" : "ocr-control"}><input inputMode="decimal" value={item.unit_price} onChange={(event) => updateItem(index, "unit_price", event.target.value)} /><FieldErrors issues={fieldIssues(index, "unit_price")} /></span>
               <input readOnly value={money(lineTotal(item))} />
@@ -255,7 +301,7 @@ export default function DocumentsOcrPage() {
           </div>) : <p className="ocr-review-empty">L’OCR non ha riconosciuto righe articolo in questo PDF.</p>}</div>
           <div className="ocr-row-actions"><button type="button" className="secondary-action" onClick={recalculateAmounts}>Ricalcola importi dalle righe incluse</button><button type="button" className="secondary-action" onClick={() => updateReview("items", [...review.items, makeReview({ proposed_data: { items: [{}] } }, catalog, markup).items[0]])}>Aggiungi riga</button></div>
         </fieldset>
-        <footer><span><button type="button" className="secondary-action" disabled={reviewSaving || imported} onClick={saveDraft}>Salva proposta</button><button className="primary-action" disabled={reviewSaving || imported} onClick={saveReview}>Conferma e carica in magazzino</button></span></footer>
+        <footer><span><button type="button" className="secondary-action" disabled={reviewSaving || skuLoading || imported} onClick={saveDraft}>Salva proposta</button><button className="primary-action" disabled={reviewSaving || skuLoading || imported} onClick={saveReview}>{skuLoading ? "Generazione SKU..." : "Conferma e carica in magazzino"}</button></span></footer>
       </section>
     </div>}
   </section>;
