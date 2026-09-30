@@ -117,6 +117,12 @@
 .document-actions button:hover,
 .document-actions a:hover { border-color: #ed001b; color: #b70018; }
 
+.documents-loading { display: grid; min-height: 230px; place-content: center; justify-items: center; gap: 8px; color: #716a70; text-align: center; }
+.documents-loading svg { color: #ed001b; animation: documents-spin 1s linear infinite; }
+.documents-loading strong { color: #3c373b; font-size: 14px; }
+.documents-loading span { font-size: 12px; }
+@keyframes documents-spin { to { transform: rotate(360deg); } }
+
 .ocr-review-layer {
   position: fixed;
   z-index: 20;
