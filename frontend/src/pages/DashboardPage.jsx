@@ -56,11 +56,20 @@ const notificationTarget = {
   "inventory.StockBalance": "Magazzino",
 };
 const asList = (data) => data?.results || data || [];
+const navigationStorageKey = (user) => `diavoletti.active-page.${user?.id || user?.email || "current-user"}`;
+
+function savedActivePage(user, allowedPages) {
+  try {
+    const saved = window.localStorage.getItem(navigationStorageKey(user));
+    if (saved && (allowedPages === null || allowedPages.includes(saved))) return saved;
+  } catch { /* La navigazione resta disponibile anche senza localStorage. */ }
+  return allowedPages?.[0] || "Panoramica";
+}
 
 export default function DashboardPage({ user, onLogout }) {
   const isClerk = user?.roles?.includes("Commesso") && !user?.is_superuser;
   const allowedPages = isClerk ? (user?.page_permissions || []) : null;
-  const [active, setActive] = useState(isClerk ? (allowedPages[0] || "") : "Panoramica");
+  const [active, setActive] = useState(() => savedActivePage(user, allowedPages));
   const [mobileMenu, setMobileMenu] = useState(false);
   const [returnSale, setReturnSale] = useState(null);
   const [overview, setOverview] = useState(emptyOverview);
@@ -72,6 +81,11 @@ export default function DashboardPage({ user, onLogout }) {
   useEffect(() => {
     if (isClerk && !allowedPages.includes(active)) setActive(allowedPages[0] || "");
   }, [active, allowedPages, isClerk]);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(navigationStorageKey(user), active); }
+    catch { /* Il salvataggio della preferenza non deve bloccare l'applicazione. */ }
+  }, [active, user]);
 
   useEffect(() => {
     if (isClerk) {

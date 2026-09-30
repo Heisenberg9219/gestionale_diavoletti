@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BarChart3, Bell, Boxes, ChevronDown, ClipboardCheck, ContactRound, CreditCard, FileScan, Gift, HandCoins, LayoutDashboard, LogOut, PackageSearch, Percent, ReceiptText, RefreshCcw, ShoppingBag, ShoppingCart, SlidersHorizontal, Truck, UserRoundCog, UsersRound, WalletCards, X } from "lucide-react";
 import logo from "../assets/diavoletti-logo-transparent.png";
 
@@ -12,8 +12,14 @@ const navigationGroups = [
   { label: "Controllo", icon: BarChart3, items: [{ label: "Integrazioni", icon: SlidersHorizontal }, { label: "Report", icon: BarChart3 }, { label: "Utenti e ruoli", icon: UserRoundCog }] },
 ];
 
+const groupForPage = (page) => navigationGroups.find((group) => group.items.some((item) => item.label === page))?.label;
+
 export default function Sidebar({ active = "Panoramica", onNavigate, onLogout, mobileOpen = false, onClose, allowedPages = null }) {
-  const [openGroup, setOpenGroup] = useState("Operatività");
+  const [openGroup, setOpenGroup] = useState(() => groupForPage(active) || "Operatività");
+  useEffect(() => {
+    const group = groupForPage(active);
+    if (group) setOpenGroup(group);
+  }, [active]);
   return <aside className={`dashboard-sidebar${mobileOpen ? " mobile-open" : ""}`}>
     <div className="sidebar-brand"><span className="sidebar-face" style={{ width: 32, height: 42, display: "block", flex: "0 0 auto", borderRadius: 0, backgroundColor: "transparent", backgroundImage: `url(${logo})`, backgroundRepeat: "no-repeat", backgroundSize: "102px auto", backgroundPosition: "right top", filter: "drop-shadow(0 2px 3px #0008)" }} aria-label="I Diavoletti" /><strong>I Diavoletti</strong><button className="mobile-sidebar-close" type="button" aria-label="Chiudi menu" onClick={onClose}><X size={19} /></button></div>
     <nav aria-label="Navigazione principale">
