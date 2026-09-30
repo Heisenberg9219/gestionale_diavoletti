@@ -149,11 +149,12 @@ export default function NewSalePage({ onNavigate }) {
   async function completePayment() {
     const amount = Number(String(paymentAmount).replace(",", "."));
     const received = Number(String(cashReceived).replace(",", "."));
-    if (!amount || amount <= 0) return setPaymentError("Inserisci un importo di pagamento valido.");
+    if (amount < 0) return setPaymentError("Inserisci un importo di pagamento valido.");
+    if (amount === 0 && paymentTotal(sale) > 0) return setPaymentError("Inserisci un importo di pagamento valido.");
     if (paymentMethod === "CASH" && (!received || received < amount)) return setPaymentError("Per i contanti indica un importo ricevuto almeno pari al totale.");
     setPaying(true); setPaymentError("");
     try {
-      await request(`/sales/sales/${sale.id}/add-payment/`, { method: "POST", body: JSON.stringify({ method: paymentMethod, amount: amount.toFixed(2), cash_received_amount: paymentMethod === "CASH" ? received.toFixed(2) : undefined, transaction_reference: paymentReference }) });
+      if (amount > 0) await request(`/sales/sales/${sale.id}/add-payment/`, { method: "POST", body: JSON.stringify({ method: paymentMethod, amount: amount.toFixed(2), cash_received_amount: paymentMethod === "CASH" ? received.toFixed(2) : undefined, transaction_reference: paymentReference }) });
       const confirmed = await request(`/sales/sales/${sale.id}/confirm/`, { method: "POST", body: JSON.stringify({}) });
       setPaymentOpen(false); setSale(null); setLabels({}); setMessage(`Vendita ${confirmed.number} registrata correttamente.`); inputRef.current?.focus();
     } catch (error) { setPaymentError(`Pagamento non completato: ${error.message}`); }
