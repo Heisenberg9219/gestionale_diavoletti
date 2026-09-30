@@ -218,7 +218,7 @@ def voucher_viewset(base):
 def gift_list_viewset(base):
     from notifications.services import generate_gift_list_notifications
     from catalog.models import ProductVariant
-    from giftlists.services import add_contribution, authorize_reserved_stock_sale, close_gift_list, set_gift_list_item
+    from giftlists.services import add_contribution, add_gift_list_items, authorize_reserved_stock_sale, close_gift_list, set_gift_list_item
     from sales.models import Sale
     @action(detail=True, methods=("post",), url_path="set-item")
     def set_item(self,request,pk=None):
@@ -242,6 +242,18 @@ def gift_list_viewset(base):
         return Response({"gift_list": self.get_serializer(gift_list).data, "voucher": serializer_for(type(voucher))(voucher).data if voucher else None})
     @action(detail=False, methods=("post",), url_path="refresh-notifications")
     def refresh_notifications(self, request): return Response({"count": len(generate_gift_list_notifications(users=(request.user,)))})
+    @action(detail=True, methods=("post",), url_path="add-items")
+    def add_items(self, request, pk=None):
+        class ItemInput(serializers.Serializer):
+            variant = serializers.UUIDField()
+            quantity = serializers.IntegerField(min_value=1, max_value=2147483647)
+        payload = ItemInput(data=required(request.data, "items"), many=True, allow_empty=False)
+        payload.is_valid(raise_exception=True)
+        items = add_gift_list_items(gift_list=self.get_object(), items=payload.validated_data, added_by=request.user)
+        from .factories import serializer_for
+        return Response(serializer_for(type(items[0]))(items, many=True).data, status=201)
+
+    base.add_items = add_items
     base.set_item=set_item; base.contribution=contribution; base.authorize_stock=authorize_stock; base.close=close; base.refresh_notifications=refresh_notifications
     return base
 

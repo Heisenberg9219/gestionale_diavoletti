@@ -161,6 +161,29 @@ def set_gift_list_item(
 
 
 @transaction.atomic
+def add_gift_list_items(*, gift_list, items, added_by):
+    from catalog.models import ProductVariant
+
+    gift_list = GiftList.objects.select_for_update().get(pk=gift_list.pk)
+    if gift_list.status != GiftList.Status.OPEN or gift_list.mode != GiftList.Mode.PRODUCTS:
+        raise ValidationError("Puoi aggiungere articoli soltanto a una lista articoli aperta.")
+    if not items:
+        raise ValidationError("Seleziona almeno un articolo del catalogo.")
+    selected_ids = [item["variant"] for item in items]
+    if len(set(selected_ids)) != len(selected_ids):
+        raise ValidationError("Lo stesso articolo è stato selezionato più volte.")
+    variants = ProductVariant.objects.filter(pk__in=selected_ids, is_active=True, product__is_active=True).in_bulk()
+    if len(variants) != len(selected_ids):
+        raise ValidationError("Uno degli articoli selezionati non è più disponibile nel catalogo.")
+    if gift_list.items.filter(variant_id__in=selected_ids).exists():
+        raise ValidationError("Uno degli articoli è già nella lista. Riapri il catalogo per aggiornare la selezione.")
+    return [set_gift_list_item(
+        gift_list=gift_list, variant=variants[item["variant"]],
+        requested_quantity=item["quantity"], reserved_quantity=item["quantity"], added_by=added_by,
+    ) for item in items]
+
+
+@transaction.atomic
 def add_contribution(
     *, gift_list, first_name, last_name, amount, payment_method,
     recorded_by, occurred_at=None, notes=""

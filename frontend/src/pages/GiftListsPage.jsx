@@ -27,7 +27,7 @@ export default function GiftListsPage() {
       const payload = { ...form, code: `LIST-${Date.now()}`, customer: form.customer || null, event_date: form.event_date || null };
       const created = await request("/gift-lists/lists/", { method: "POST", body: JSON.stringify(payload) });
       setFormOpen(false); setForm(emptyForm); setQuery(""); setStatus("OPEN");
-      setOpenedList({ id: created.id, startAdding: created.mode === "CONTRIBUTIONS" });
+      setOpenedList({ id: created.id, startAdding: true });
       setSuccess(true); setMessage("Lista regalo creata correttamente.");
       await load("", "OPEN");
       if (payload.notifications_enabled && payload.event_date) {

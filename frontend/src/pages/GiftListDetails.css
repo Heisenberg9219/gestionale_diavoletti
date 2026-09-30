@@ -31,3 +31,14 @@
   .gift-contributions-heading { align-items: flex-start; flex-direction: column; }
 }
 @media (max-width: 420px) { .gift-contribution-form { grid-template-columns: 1fr; } }
+.gift-catalog-picker { padding: 16px; margin-bottom: 18px; border: 1px solid #eeeaea; border-radius: 10px; background: #faf8f9; }
+.gift-catalog-picker fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.gift-catalog-search { box-sizing: border-box; width: 100%; height: 42px; border: 1px solid #ded9db; border-radius: 7px; padding: 0 12px; font: inherit; font-size: 13px; }
+.gift-catalog-select-all { display: flex; gap: 10px; align-items: center; padding: 14px 0; font-size: 12px; font-weight: 700; }
+.gift-catalog-options { max-height: 320px; overflow-y: auto; margin-bottom: 14px; }
+.gift-catalog-option { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid #e5dfe2; }
+.gift-catalog-option > label:first-child { display: flex; gap: 10px; align-items: center; flex: 1; font-size: 13px; cursor: pointer; }
+.gift-catalog-option small { display: block; color: #817b80; margin-top: 4px; }
+.gift-catalog-picker input[type="checkbox"] { width: 17px; height: 17px; flex-shrink: 0; accent-color: #ed001b; }
+.gift-catalog-quantity { display: grid; gap: 4px; font-size: 11px; }
+.gift-catalog-quantity input { width: 70px; height: 34px; border: 1px solid #ded9db; border-radius: 6px; padding: 0 6px; background: #fff; font: inherit; }

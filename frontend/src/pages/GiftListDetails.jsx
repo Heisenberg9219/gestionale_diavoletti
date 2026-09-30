@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { request } from "../api";
 import "./GiftListDetails.css";
+import GiftListCatalogPicker, { variantLabel } from "./GiftListCatalogPicker";
 
 const emptyContribution = () => ({ first_name: "", last_name: "", amount: "", payment_method: "CASH" });
 const money = (value) => new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" }).format(value);
@@ -41,7 +42,7 @@ export default function GiftListDetails({ giftListId, startAdding = false, onClo
         if (detail.mode === "PRODUCTS") {
           entries = await Promise.all(entries.map(async (entry) => {
             const variant = await request(`/catalog/variants/${entry.variant}/`);
-            return { ...entry, label: `${variant.product_name || "Articolo"} · ${variant.sku}` };
+            return { ...entry, label: variantLabel(variant) };
           }));
         }
         if (active) { setGiftList(detail); setRows(entries); }
@@ -91,6 +92,18 @@ export default function GiftListDetails({ giftListId, startAdding = false, onClo
     finally { submitting.current = false; setSaving(false); }
   }
 
+  async function addArticles(items, variants) {
+    if (submitting.current || giftList?.mode !== "PRODUCTS" || giftList.status !== "OPEN") return;
+    submitting.current = true; setSaving(true); setError(""); setNotice("");
+    try {
+      const added = await request(`/gift-lists/lists/${giftList.id}/add-items/`, { method: "POST", body: JSON.stringify({ items }) });
+      const labels = new Map(variants.map((variant) => [variant.id, variantLabel(variant)]));
+      setRows((current) => [...current, ...added.map((item) => ({ ...item, label: labels.get(item.variant) || "Articolo" }))]);
+      setFormOpen(false); setNotice("Articoli aggiunti alla lista.");
+    } catch (exception) { setError(exception.message); }
+    finally { submitting.current = false; setSaving(false); }
+  }
+
   return <div className="gift-detail-layer">
     <div className="gift-detail-backdrop" onClick={() => { if (!submitting.current) onClose(); }} />
     <section className="gift-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="gift-detail-title" tabIndex={-1} ref={dialog} onKeyDown={handleKeys}>
@@ -114,7 +127,10 @@ export default function GiftListDetails({ giftListId, startAdding = false, onClo
           </form>}
           {error && <p className="catalog-error" role="alert">{error}</p>}{notice && <p className="operation-success" role="status">{notice}</p>}
           {rows.length ? <div className="gift-contribution-table"><table><thead><tr><th>Nome</th><th>Cognome</th><th>Pagamento</th><th>Importo</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td>{row.contributor_first_name}</td><td>{row.contributor_last_name}</td><td>{paymentLabel[row.payment_method]}</td><td>{money(Number(row.amount))}</td></tr>)}</tbody></table></div> : <p className="gift-detail-empty">Nessun conferente registrato.</p>}
-        </> : <div className="gift-contribution-table"><table><thead><tr><th>Articolo</th><th>Richiesti</th><th>Riservati</th><th>Acquistati</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td>{row.label}</td><td>{row.requested_quantity}</td><td>{row.reserved_quantity}</td><td>{row.purchased_quantity}</td></tr>)}</tbody></table>{!rows.length && <p className="gift-detail-empty">Nessun articolo nella lista.</p>}</div>}
+        </> : <><div className="gift-contributions-heading"><h4>Articoli della lista</h4>{giftList.status === "OPEN" && <button type="button" className="primary-action" disabled={saving} onClick={() => setFormOpen(true)}><Plus size={17} /> Aggiungi dal catalogo</button>}</div>
+          {formOpen && giftList.status === "OPEN" && <GiftListCatalogPicker existingIds={rows.map((item) => item.variant)} saving={saving} onAdd={addArticles} onCancel={() => setFormOpen(false)} />}
+          {error && <p className="catalog-error" role="alert">{error}</p>}{notice && <p className="operation-success" role="status">{notice}</p>}
+          <div className="gift-contribution-table"><table><thead><tr><th>Articolo</th><th>Richiesti</th><th>Riservati</th><th>Acquistati</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td>{row.label}</td><td>{row.requested_quantity}</td><td>{row.reserved_quantity}</td><td>{row.purchased_quantity}</td></tr>)}</tbody></table>{!rows.length && <p className="gift-detail-empty">Nessun articolo nella lista.</p>}</div></>}
       </>}
     </section>
   </div>;
