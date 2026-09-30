@@ -25,6 +25,7 @@ export default function CatalogPage() {
   const [form, setForm] = useState(blank);
   const [options, setOptions] = useState({ brands: [], categories: [], seasons: [], taxes: [], sizes: [], colors: [] });
   const [saving, setSaving] = useState(false);
+  const [skuLoading, setSkuLoading] = useState(false);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState([]);
   const [bulk, setBulk] = useState(blankBulk);
@@ -56,7 +57,7 @@ export default function CatalogPage() {
 
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const updateBulk = (key, value) => setBulk((current) => ({ ...current, [key]: value }));
-  const close = () => { if (!saving) { setOpen(false); setEditing(null); setError(""); } };
+  const close = () => { if (!saving && !skuLoading) { setOpen(false); setEditing(null); setError(""); } };
   const toggleSelected = (id) => setSelected((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
   const selectedAll = items.length > 0 && items.every((item) => selected.includes(item.id));
 
@@ -90,6 +91,7 @@ export default function CatalogPage() {
   }
 
   async function openEdit(item) {
+    setSkuLoading(false);
     try {
       const [product, codes, prices] = await Promise.all([
         request(`/catalog/products/${item.product}/`), request(`/catalog/barcodes/?variant=${item.id}`),
@@ -107,6 +109,16 @@ export default function CatalogPage() {
       });
       setOpen(true);
     } catch (requestError) { setError(requestError.message); }
+  }
+
+  async function openNew() {
+    setEditing(null); setError(""); setForm({ ...blank }); setOpen(true); setSkuLoading(true);
+    try {
+      const result = await request("/catalog/variants/reserve-skus/", { method: "POST", body: JSON.stringify({ count: 1 }) });
+      if (!result.skus?.[0]) throw new Error("Non è stato possibile generare il prossimo SKU.");
+      setForm((current) => ({ ...current, sku: result.skus[0] }));
+    } catch (requestError) { setError(requestError.message); }
+    finally { setSkuLoading(false); }
   }
 
   async function save(event) {
@@ -163,7 +175,7 @@ export default function CatalogPage() {
   }
 
   return <section className="products-page">
-    <div className="page-title-row"><div><p className="eyebrow">Prodotti</p><h2>Catalogo</h2><span>Clicca sul titolo dell’articolo per modificarlo.</span></div><button className="primary-action" onClick={() => { setForm(blank); setEditing(null); setOpen(true); }}><PackagePlus size={17} /> Nuovo articolo</button></div>
+    <div className="page-title-row"><div><p className="eyebrow">Prodotti</p><h2>Catalogo</h2><span>Clicca sul titolo dell’articolo per modificarlo.</span></div><button className="primary-action" onClick={openNew}><PackagePlus size={17} /> Nuovo articolo</button></div>
     <form className="products-search" onSubmit={(event) => { event.preventDefault(); load(); }}><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cerca nome, SKU, barcode o codice prodotto" /><button>Ricerca</button></form>
     {error && !open && <p className="catalog-error">{error}</p>}
     {selected.length > 0 && <section className="catalog-bulk-panel">
@@ -189,9 +201,9 @@ export default function CatalogPage() {
       <Field label="Descrizione"><input value={form.description} onChange={(event) => update("description", event.target.value)} /></Field><Field label="Tipo collezione"><select value={form.season_type} onChange={(event) => update("season_type", event.target.value)}><option value="">Nessuna</option><option value="SPRING_SUMMER">Primavera/Estate</option><option value="AUTUMN_WINTER">Autunno/Inverno</option></select></Field>
       <Field label="Anno collezione"><input type="number" min="2000" max="2100" disabled={!form.season_type} value={form.season_year} onChange={(event) => update("season_year", event.target.value)} /></Field>
       {[ ["Marca", "brands", "brand", false], ["Categoria", "categories", "category", true] ].map(([label, kind, key, required]) => <Field key={key} label={label}><span className="select-with-add"><select required={required} value={form[key]} onChange={(event) => update(key, event.target.value)}><option value="">{required ? "Seleziona" : "Nessuna"}</option>{options[kind].map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button type="button" onClick={() => quickAdd(kind)}><Plus size={16} /></button></span></Field>)}
-      <Field label="IVA"><select required value={form.tax_rate} onChange={(event) => update("tax_rate", event.target.value)}><option value="">Seleziona</option>{options.taxes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="SKU"><input required value={form.sku} onChange={(event) => update("sku", event.target.value)} /></Field>
+      <Field label="IVA"><select required value={form.tax_rate} onChange={(event) => update("tax_rate", event.target.value)}><option value="">Seleziona</option>{options.taxes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="SKU"><input required disabled={!editing && skuLoading} value={form.sku} placeholder={skuLoading ? "Generazione SKU..." : "SKU progressivo"} onChange={(event) => update("sku", event.target.value)} /></Field>
       <Field label="Taglia"><select required value={form.size} onChange={(event) => update("size", event.target.value)}><option value="">Seleziona</option>{options.sizes.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></Field><Field label="Colore"><span className="select-with-add"><select value={form.color} onChange={(event) => update("color", event.target.value)}><option value="">Nessuno</option>{options.colors.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button type="button" onClick={() => quickAdd("colors")}><Plus size={16} /></button></span></Field>
       <Field label="Prezzo vendita"><input required type="number" min="0.01" step="0.01" value={form.sale_price} onChange={(event) => update("sale_price", event.target.value)} /></Field><Field label="Barcode"><input value={form.barcode} onChange={(event) => update("barcode", event.target.value)} /></Field>
-    </div><footer><button type="button" className="secondary-action" onClick={close}>Annulla</button><button className="primary-action" disabled={saving}>{saving ? "Salvataggio..." : "Salva modifiche"}</button></footer></form></div>}
+    </div><footer><button type="button" className="secondary-action" onClick={close}>Annulla</button><button className="primary-action" disabled={saving || skuLoading}>{saving ? "Salvataggio..." : skuLoading ? "Generazione SKU..." : "Salva modifiche"}</button></footer></form></div>}
   </section>;
 }
