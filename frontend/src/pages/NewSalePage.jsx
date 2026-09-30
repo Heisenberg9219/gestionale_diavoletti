@@ -39,6 +39,11 @@ export default function NewSalePage({ onNavigate }) {
   const [giftLoading, setGiftLoading] = useState(false);
   const [voucherCode, setVoucherCode] = useState("");
   const [voucherMessage, setVoucherMessage] = useState("");
+  const [reservedPrompt, setReservedPrompt] = useState(null);
+  const [reservedChoice, setReservedChoice] = useState("");
+  const [reservedError, setReservedError] = useState("");
+  const [adding, setAdding] = useState(false);
+  const addingRef = useRef(false);
   const inputRef = useRef(null);
 
   useEffect(() => {
@@ -67,22 +72,39 @@ export default function NewSalePage({ onNavigate }) {
     } catch { setMessage("Ricerca articolo non disponibile."); }
   }
 
-  async function addVariant(variant) {
+  async function addVariant(variant, pending = null) {
+    if (addingRef.current) return;
+    addingRef.current = true; setAdding(true); setReservedError(""); setMessage("");
     try {
-      const currentSale = await ensureSale();
+      const currentSale = pending?.sale || await ensureSale();
       const existing = currentSale.lines?.find((line) => line.variant === variant.id);
-      const line = await request(`/sales/sales/${currentSale.id}/set-line/`, { method: "POST", body: JSON.stringify({ variant: variant.id, quantity: (existing?.quantity || 0) + 1 }) });
+      const previous = pending?.previous ?? (existing?.quantity || 0);
+      const result = await request(`/sales/sales/${currentSale.id}/add-with-gift-check/`, {
+        method: "POST", body: JSON.stringify({ variant: variant.id, quantity: previous + 1,
+          previous_quantity: previous, ...(pending ? { release_item: reservedChoice } : {}) }),
+      });
+      if (result.confirmation_required) {
+        setReservedPrompt({ variant, sale: currentSale, previous, lists: result.lists });
+        setReservedChoice(result.lists.length === 1 ? result.lists[0].item : "");
+        return;
+      }
+      setReservedPrompt(null);
       const refreshed = await request(`/sales/sales/${currentSale.id}/`);
       setSale(refreshed);
-      setLabels((current) => ({ ...current, [variant.id]: `${variant.product_name} · ${variant.color_name || ""} ${variant.size_label || ""}`.trim() }));
+      setLabels((current) => ({ ...current, [variant.id]: variant.product_name
+        ? `${variant.product_name} · ${variant.color_name || ""} ${variant.size_label || ""}`.trim()
+        : current[variant.id] || variant.sku || "Articolo" }));
       setMatches([]); setQuery(""); inputRef.current?.focus();
-    } catch (err) { setMessage(err.message); }
+    } catch (err) { if (pending) setReservedError(err.message); else setMessage(err.message); }
+    finally { addingRef.current = false; setAdding(false); }
   }
 
   async function changeQuantity(line, delta) {
+    if (addingRef.current) return;
+    if (delta > 0 && !line.gift_list_item) return addVariant({ id: line.variant, sku: line.sku_snapshot });
     if (line.quantity + delta < 1) return removeLine(line);
     try {
-      await request(`/sales/sales/${sale.id}/set-line/`, { method: "POST", body: JSON.stringify({ variant: line.variant, quantity: line.quantity + delta }) });
+      await request(`/sales/sales/${sale.id}/set-line/`, { method: "POST", body: JSON.stringify({ variant: line.variant, quantity: line.quantity + delta, gift_list_item: line.gift_list_item || null }) });
       setSale(await request(`/sales/sales/${sale.id}/`));
     } catch (err) { setMessage(err.message); }
   }
@@ -254,6 +276,21 @@ export default function NewSalePage({ onNavigate }) {
 <button className="primary-action receipt-pay" disabled={!sale?.lines?.length} onClick={openPayment}>Vai al pagamento</button>
 </aside>
 </div>
+    {reservedPrompt && <div className="payment-layer" role="dialog" aria-modal="true" aria-labelledby="reserved-title">
+      <button className="payment-backdrop" aria-label="Annulla" disabled={adding} onClick={() => setReservedPrompt(null)} />
+      <section className="payment-dialog sale-selection-dialog">
+        <header><h3 id="reserved-title">Articolo in lista regalo</h3><button type="button" aria-label="Chiudi" disabled={adding} onClick={() => setReservedPrompt(null)}><X size={20} /></button></header>
+        <p><strong>{reservedPrompt.variant.product_name || labels[reservedPrompt.variant.id] || reservedPrompt.variant.sku}</strong> è riservato nelle seguenti liste:</p>
+        {reservedPrompt.lists.map((entry) => <label key={entry.item} className="selection-row">
+          <input type="radio" name="release-list" value={entry.item} checked={reservedChoice === entry.item} disabled={adding} onChange={() => setReservedChoice(entry.item)} />
+          <span><strong>{entry.title}</strong><br />{entry.beneficiary} · {entry.code} · {entry.quantity} pezzi riservati</span>
+        </label>)}
+        <p>Vuoi togliere 1 pezzo dalla lista selezionata e aggiungerlo alla vendita?</p>
+        {reservedError && <p className="payment-error" role="alert">{reservedError}</p>}
+        <footer><button type="button" className="secondary-action" disabled={adding} onClick={() => { setReservedPrompt(null); inputRef.current?.focus(); }}>Annulla</button>
+        <button type="button" className="primary-action" disabled={adding || !reservedChoice} onClick={() => addVariant(reservedPrompt.variant, reservedPrompt)}>{adding ? "Aggiunta…" : "Togli dalla lista e vendi"}</button></footer>
+      </section>
+    </div>}
     {customerOpen && <div className="payment-layer" role="dialog" aria-modal="true" aria-label="Associa cliente"><button className="payment-backdrop" aria-label="Chiudi" disabled={customerSaving} onClick={() => setCustomerOpen(false)} /><section className="payment-dialog sale-selection-dialog"><header><div><p className="eyebrow">Cliente</p><h3>Associa cliente alla vendita</h3></div><button type="button" aria-label="Chiudi" disabled={customerSaving} onClick={() => setCustomerOpen(false)}><X size={20} /></button></header><form className="customer-search" onSubmit={(event) => { event.preventDefault(); searchCustomers(); }}><input autoFocus aria-label="Cerca cliente per nome, telefono o codice" disabled={customerSaving} value={customerQuery} onChange={(event) => { customerRequest.current += 1; setCustomers([]); setCustomerLoading(true); setCustomerError(""); setCustomerQuery(event.target.value); }} placeholder="Nome, telefono o codice cliente" /><button className="secondary-action" disabled={customerSaving}>Cerca</button></form>{customerError && <p className="selection-empty" role="alert">{customerError}</p>}{customerLoading && <p className="selection-empty" role="status">Ricerca clienti…</p>}{customers.map((customer) => <button type="button" className="selection-row" disabled={customerSaving} key={customer.id} onClick={() => selectCustomer(customer)}><strong>{customer.full_name}</strong><span>{customer.customer_code} · {customer.phone || customer.email || "Nessun contatto"}</span></button>)}{!customerLoading && !customerError && !customers.length && <p className="selection-empty">Nessun cliente trovato.</p>}{!customerLoading && customerMore && <p className="selection-empty">Mostrati i primi 50 risultati. Continua a scrivere per restringere la ricerca.</p>}</section></div>}
     {giftListOpen && <div className="payment-layer" role="dialog" aria-modal="true" aria-label="Carica lista regalo"><button className="payment-backdrop" aria-label="Chiudi" onClick={() => setGiftListOpen(false)} /><section className="payment-dialog sale-selection-dialog"><header><div><p className="eyebrow">Lista regalo</p><h3>{selectedGiftList ? selectedGiftList.title : "Scegli una lista"}</h3></div><button type="button" aria-label="Chiudi" onClick={() => setGiftListOpen(false)}><X size={20} /></button></header>{giftLoading ? <p className="selection-empty">Caricamento in corso…</p> : !selectedGiftList ? giftLists.map((giftList) => <button type="button" className="selection-row" key={giftList.id} onClick={() => selectGiftList(giftList)}><strong>{giftList.title}</strong><span>{giftList.code} · {giftList.beneficiary_first_name} {giftList.beneficiary_last_name}</span></button>) : giftItems.map((item) => { const remaining = Number(item.reserved_quantity || 0) - Number(item.purchased_quantity || 0); return <div className="gift-item-row" key={item.id}><div><strong>{item.variant_data?.product_name || item.variant}</strong><span>{item.variant_data?.sku || ""} · Disponibili dalla lista: {remaining}</span></div><button type="button" className="secondary-action" disabled={remaining < 1} onClick={() => addGiftItem(item)}>Aggiungi</button></div>; })}{!giftLoading && !selectedGiftList && !giftLists.length && <p className="selection-empty">Nessuna lista articoli aperta.</p>}</section></div>}
     {paymentOpen && <div className="payment-layer" role="dialog" aria-modal="true" aria-label="Pagamento vendita">

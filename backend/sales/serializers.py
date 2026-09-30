@@ -79,3 +79,10 @@ class RemoveLineSerializer(DraftReasonSerializer):
 
 class RemovePaymentSerializer(DraftReasonSerializer):
     payment = serializers.UUIDField()
+
+
+class ReleaseGiftItemCommandSerializer(serializers.Serializer):
+    variant = serializers.UUIDField()
+    quantity = serializers.IntegerField(min_value=1)
+    previous_quantity = serializers.IntegerField(min_value=0)
+    release_item = serializers.UUIDField(required=False)

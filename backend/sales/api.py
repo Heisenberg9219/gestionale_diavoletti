@@ -162,6 +162,64 @@ class SaleViewSet(viewsets.ModelViewSet):
         gift_list_item = values.get("gift_list_item")
         line = set_sale_line(sale=self.get_object(), variant=get_object_or_404(ProductVariant, pk=values["variant"]), quantity=values["quantity"], manual_unit_price=values.get("manual_unit_price"), manual_override_reason=values.get("reason", ""), manual_override_by=request.user, reserved_stock_authorization=get_object_or_404(ReservedStockSaleAuthorization, pk=authorization) if authorization else None, gift_list_item=get_object_or_404(GiftListItem, pk=gift_list_item) if gift_list_item else None)
         return Response(SaleLineSerializer(line).data)
+    @action(detail=True, methods=("post",), url_path="add-with-gift-check")
+    @transaction.atomic
+    def add_with_gift_check(self, request, pk=None):
+        from .serializers import ReleaseGiftItemCommandSerializer
+        from giftlists.services import get_reserved_stock_warning
+        from giftlists.models import GiftList
+        from django.db.models import F
+        data = ReleaseGiftItemCommandSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        values = data.validated_data
+        sale = Sale.objects.select_for_update().get(pk=self.get_object().pk)
+        variant = get_object_or_404(ProductVariant, pk=values["variant"])
+        existing = sale.lines.filter(variant=variant).first()
+        previous = existing.quantity if existing else 0
+        if previous != values["previous_quantity"]:
+            raise ValidationError("Il carrello è cambiato. Ricarica la vendita e riprova.")
+        if sale.status != Sale.Status.OPEN or sale.payments.exists():
+            raise ValidationError("La vendita non può essere modificata dopo il pagamento.")
+        quantity = values["quantity"]
+        increment = quantity - previous
+        if increment <= 0:
+            raise ValidationError("La quantità da aggiungere deve essere positiva.")
+        if existing and existing.gift_list_item_id:
+            raise ValidationError("Questo articolo è già collegato a una lista nel carrello. Gestiscilo dalla lista regalo.")
+        items = list(GiftListItem.objects.select_for_update(of=("self",)).filter(
+            variant=variant, gift_list__location=sale.location,
+            gift_list__status=GiftList.Status.OPEN,
+            reserved_quantity__gt=F("purchased_quantity"),
+        ).select_related("gift_list").order_by("pk"))
+        release_id = values.get("release_item")
+        if items and not release_id:
+            return Response({"confirmation_required": True, "lists": [
+                {"item": str(item.pk), "title": item.gift_list.title,
+                 "beneficiary": f"{item.gift_list.beneficiary_first_name} {item.gift_list.beneficiary_last_name}",
+                 "code": item.gift_list.code, "quantity": item.remaining_reserved_quantity}
+                for item in items
+            ]})
+        if release_id:
+            item = next((item for item in items if item.pk == release_id), None)
+            if item is None or item.remaining_reserved_quantity < increment:
+                raise ValidationError("La disponibilità della lista è cambiata. Cerca nuovamente l'articolo.")
+            warning = get_reserved_stock_warning(sale=sale, variant=variant, quantity=quantity)
+            ReservedStockSaleAuthorization.objects.create(
+                sale=sale, variant=variant, requested_sale_quantity=quantity,
+                stock_quantity_snapshot=warning["stock_quantity"],
+                reserved_quantity_snapshot=warning["reserved_quantity"],
+                affected_list_codes=[item.gift_list.code],
+                reason=f"Rimozione di {increment} pezzi dalla lista per vendita al banco",
+                authorized_by=request.user,
+            )
+            item.reserved_quantity -= increment
+            item.requested_quantity = max(item.purchased_quantity, item.requested_quantity - increment, 1)
+            item.save(update_fields=("reserved_quantity", "requested_quantity", "updated_at"))
+            if not item.reserved_quantity and not item.purchased_quantity and not item.sale_lines.exists():
+                item.delete()
+        line = set_sale_line(sale=sale, variant=variant, quantity=quantity, manual_override_by=request.user)
+        return Response({"confirmation_required": False, "line": SaleLineSerializer(line).data})
+
     @action(detail=True, methods=("post",), url_path="set-total")
     def set_total(self, request, pk=None):
         data = TotalOverrideCommandSerializer(data=request.data); data.is_valid(raise_exception=True)
