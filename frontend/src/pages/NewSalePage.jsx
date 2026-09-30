@@ -278,14 +278,19 @@ export default function NewSalePage({ onNavigate }) {
 </div>
     {reservedPrompt && <div className="payment-layer" role="dialog" aria-modal="true" aria-labelledby="reserved-title">
       <button className="payment-backdrop" aria-label="Annulla" disabled={adding} onClick={() => setReservedPrompt(null)} />
-      <section className="payment-dialog sale-selection-dialog">
+      <section className="payment-dialog sale-selection-dialog reserved-dialog">
         <header><h3 id="reserved-title">Articolo in lista regalo</h3><button type="button" aria-label="Chiudi" disabled={adding} onClick={() => setReservedPrompt(null)}><X size={20} /></button></header>
-        <p><strong>{reservedPrompt.variant.product_name || labels[reservedPrompt.variant.id] || reservedPrompt.variant.sku}</strong> è riservato nelle seguenti liste:</p>
-        {reservedPrompt.lists.map((entry) => <label key={entry.item} className="selection-row">
-          <input type="radio" name="release-list" value={entry.item} checked={reservedChoice === entry.item} disabled={adding} onChange={() => setReservedChoice(entry.item)} />
-          <span><strong>{entry.title}</strong><br />{entry.beneficiary} · {entry.code} · {entry.quantity} pezzi riservati</span>
-        </label>)}
-        <p>Vuoi togliere 1 pezzo dalla lista selezionata e aggiungerlo alla vendita?</p>
+        <div className="reserved-product"><span>Articolo selezionato</span><strong>{reservedPrompt.variant.product_name || labels[reservedPrompt.variant.id] || reservedPrompt.variant.sku}</strong></div>
+        <div className="reserved-lists" role={reservedPrompt.lists.length > 1 ? "radiogroup" : undefined} aria-label="Lista da cui rimuovere l'articolo">
+          {reservedPrompt.lists.length > 1 && <p className="reserved-hint">Scegli da quale lista togliere il pezzo.</p>}
+          {reservedPrompt.lists.map((entry) => {
+            const content = <><span className="reserved-list-info"><strong>{entry.title}</strong><span className="reserved-beneficiary">{entry.beneficiary}</span><span className="reserved-code">{entry.code}</span></span><span className="reserved-count">{entry.quantity} {entry.quantity === 1 ? "pezzo" : "pezzi"}</span></>;
+            return reservedPrompt.lists.length === 1
+              ? <div key={entry.item} className="reserved-list-card">{content}</div>
+              : <label key={entry.item} className={`reserved-list-card reserved-list-option${reservedChoice === entry.item ? " is-selected" : ""}`}><input type="radio" name="release-list" value={entry.item} checked={reservedChoice === entry.item} disabled={adding} onChange={() => setReservedChoice(entry.item)} />{content}</label>;
+          })}
+        </div>
+        <p className="reserved-question">Togliere <strong>1 pezzo</strong> dalla lista e aggiungerlo alla vendita?</p>
         {reservedError && <p className="payment-error" role="alert">{reservedError}</p>}
         <footer><button type="button" className="secondary-action" disabled={adding} onClick={() => { setReservedPrompt(null); inputRef.current?.focus(); }}>Annulla</button>
         <button type="button" className="primary-action" disabled={adding || !reservedChoice} onClick={() => addVariant(reservedPrompt.variant, reservedPrompt)}>{adding ? "Aggiunta…" : "Togli dalla lista e vendi"}</button></footer>
