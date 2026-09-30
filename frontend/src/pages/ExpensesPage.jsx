@@ -13,7 +13,7 @@ export default function ExpensesPage() {
   const [expenses, setExpenses] = useState([]); const [categories, setCategories] = useState([]); const [selected, setSelected] = useState([]); const [query, setQuery] = useState(""); const [status, setStatus] = useState("ALL");
   const [formOpen, setFormOpen] = useState(false); const [form, setForm] = useState(blank()); const [newCategoryOpen, setNewCategoryOpen] = useState(false); const [newCategory, setNewCategory] = useState(""); const [saving, setSaving] = useState(false); const [message, setMessage] = useState(""); const [success, setSuccess] = useState(false);
   const notice = (text, ok = true) => { setSuccess(ok); setMessage(text); };
-  const load = async () => { try { const [expenseData, categoryData] = await Promise.all([request("/expenses/expenses/"), request("/expenses/categories/?is_active=true")]); setExpenses(list(expenseData)); setCategories(list(categoryData)); } catch (error) { notice(error.message, false); } };
+  const load = async () => { try { const [expenseData, categoryData] = await Promise.all([request("/expenses/expenses/"), request("/expenses/categories/?is_active=True")]); setExpenses(list(expenseData)); setCategories(list(categoryData)); } catch (error) { notice(error.message, false); } };
   useEffect(() => { load(); }, []);
   useEffect(() => { if (!message) return undefined; const timer = setTimeout(() => setMessage(""), 4000); return () => clearTimeout(timer); }, [message]);
   const items = useMemo(() => expenses.filter((expense) => { const text = `${expense.description} ${expense.document_number || ""}`.toLowerCase(); return (!query.trim() || text.includes(query.trim().toLowerCase())) && (status === "ALL" || expense.status === status); }), [expenses, query, status]);
