@@ -24,6 +24,13 @@ export default function NewSalePage({ onNavigate }) {
   const [customerOpen, setCustomerOpen] = useState(false);
   const [customerQuery, setCustomerQuery] = useState("");
   const [customers, setCustomers] = useState([]);
+  const [customerLoading, setCustomerLoading] = useState(false);
+  const [customerError, setCustomerError] = useState("");
+  const [customerMore, setCustomerMore] = useState(false);
+  const [customerSaving, setCustomerSaving] = useState(false);
+  const customerRequest = useRef(0);
+  const customerTimer = useRef(null);
+  const customerSubmitting = useRef(false);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [giftListOpen, setGiftListOpen] = useState(false);
   const [giftLists, setGiftLists] = useState([]);
@@ -86,15 +93,32 @@ export default function NewSalePage({ onNavigate }) {
       setMessage("Articolo rimosso dal carrello.");
     } catch (err) { setMessage(`Impossibile rimuovere l'articolo: ${err.message}`); }
   }
+  useEffect(() => {
+    if (!customerOpen) return;
+    setCustomerLoading(true); setCustomerError(""); setCustomers([]); setCustomerMore(false);
+    customerTimer.current = setTimeout(() => searchCustomers(customerQuery), 250);
+    return () => { clearTimeout(customerTimer.current); customerRequest.current += 1; };
+  }, [customerOpen, customerQuery]);
+
   async function searchCustomers(value = customerQuery) {
-    try { setCustomers(list(await request(`/customers/customers/?search=${encodeURIComponent(value.trim())}`))); }
-    catch (error) { setMessage(`Ricerca clienti non disponibile: ${error.message}`); }
+    clearTimeout(customerTimer.current);
+    const requestId = ++customerRequest.current;
+    setCustomerLoading(true); setCustomerError(""); setCustomers([]); setCustomerMore(false);
+    try {
+      const result = await request(`/customers/customers/?search=${encodeURIComponent(value.trim())}&ordering=last_name,first_name&page_size=50`);
+      if (requestId === customerRequest.current) { setCustomers(list(result)); setCustomerMore(Boolean(result.next)); }
+    } catch (error) {
+      if (requestId === customerRequest.current) setCustomerError(`Ricerca clienti non disponibile: ${error.message}`);
+    } finally { if (requestId === customerRequest.current) setCustomerLoading(false); }
   }
   async function selectCustomer(customer) {
+    if (customerSubmitting.current) return;
+    customerSubmitting.current = true; setCustomerSaving(true); setCustomerError("");
     try {
       if (sale) setSale(await request(`/sales/sales/${sale.id}/set-customer/`, { method: "POST", body: JSON.stringify({ customer: customer.id }) }));
       setSelectedCustomer(customer); setCustomerOpen(false); setMessage(`Cliente associato: ${customer.full_name}.`);
-    } catch (error) { setMessage(`Impossibile associare il cliente: ${error.message}`); }
+    } catch (error) { setCustomerError(`Impossibile associare il cliente: ${error.message}`); }
+    finally { customerSubmitting.current = false; setCustomerSaving(false); }
   }
   async function openGiftLists() {
     setGiftListOpen(true); setSelectedGiftList(null); setGiftItems([]); setGiftLoading(true);
@@ -204,7 +228,7 @@ export default function NewSalePage({ onNavigate }) {
 </div>
 <span>{sale?.lines?.length || 0} righe</span>
 </div>
-<div className="sale-tools"><button type="button" onClick={() => { setCustomerOpen(true); setCustomerQuery(""); setCustomers([]); }}>{selectedCustomer?.full_name || sale?.customer_name || "Associa cliente"}</button><button type="button" onClick={openGiftLists}>Carica lista regalo</button></div>
+<div className="sale-tools"><button type="button" onClick={() => { setCustomerOpen(true); setCustomerQuery(""); setCustomers([]); setCustomerLoading(true); setCustomerError(""); }}>{selectedCustomer?.full_name || sale?.customer_name || "Associa cliente"}</button><button type="button" onClick={openGiftLists}>Carica lista regalo</button></div>
 <div className="receipt-lines">{sale?.lines?.length ? sale.lines.map((line) => <div className="receipt-line" key={line.id}>
 <div>
 <strong>{labels[line.variant] || "Articolo aggiunto"}</strong>
@@ -230,7 +254,7 @@ export default function NewSalePage({ onNavigate }) {
 <button className="primary-action receipt-pay" disabled={!sale?.lines?.length} onClick={openPayment}>Vai al pagamento</button>
 </aside>
 </div>
-    {customerOpen && <div className="payment-layer" role="dialog" aria-modal="true" aria-label="Associa cliente"><button className="payment-backdrop" aria-label="Chiudi" onClick={() => setCustomerOpen(false)} /><section className="payment-dialog sale-selection-dialog"><header><div><p className="eyebrow">Cliente</p><h3>Associa cliente alla vendita</h3></div><button type="button" aria-label="Chiudi" onClick={() => setCustomerOpen(false)}><X size={20} /></button></header><form className="customer-search" onSubmit={(event) => { event.preventDefault(); searchCustomers(); }}><input autoFocus value={customerQuery} onChange={(event) => setCustomerQuery(event.target.value)} placeholder="Nome, telefono o codice cliente" /><button className="secondary-action">Cerca</button></form>{customers.map((customer) => <button type="button" className="selection-row" key={customer.id} onClick={() => selectCustomer(customer)}><strong>{customer.full_name}</strong><span>{customer.customer_code} · {customer.phone || customer.email || "Nessun contatto"}</span></button>)}{customerQuery && !customers.length && <p className="selection-empty">Nessun cliente trovato.</p>}</section></div>}
+    {customerOpen && <div className="payment-layer" role="dialog" aria-modal="true" aria-label="Associa cliente"><button className="payment-backdrop" aria-label="Chiudi" disabled={customerSaving} onClick={() => setCustomerOpen(false)} /><section className="payment-dialog sale-selection-dialog"><header><div><p className="eyebrow">Cliente</p><h3>Associa cliente alla vendita</h3></div><button type="button" aria-label="Chiudi" disabled={customerSaving} onClick={() => setCustomerOpen(false)}><X size={20} /></button></header><form className="customer-search" onSubmit={(event) => { event.preventDefault(); searchCustomers(); }}><input autoFocus aria-label="Cerca cliente per nome, telefono o codice" disabled={customerSaving} value={customerQuery} onChange={(event) => { customerRequest.current += 1; setCustomers([]); setCustomerLoading(true); setCustomerError(""); setCustomerQuery(event.target.value); }} placeholder="Nome, telefono o codice cliente" /><button className="secondary-action" disabled={customerSaving}>Cerca</button></form>{customerError && <p className="selection-empty" role="alert">{customerError}</p>}{customerLoading && <p className="selection-empty" role="status">Ricerca clienti…</p>}{customers.map((customer) => <button type="button" className="selection-row" disabled={customerSaving} key={customer.id} onClick={() => selectCustomer(customer)}><strong>{customer.full_name}</strong><span>{customer.customer_code} · {customer.phone || customer.email || "Nessun contatto"}</span></button>)}{!customerLoading && !customerError && !customers.length && <p className="selection-empty">Nessun cliente trovato.</p>}{!customerLoading && customerMore && <p className="selection-empty">Mostrati i primi 50 risultati. Continua a scrivere per restringere la ricerca.</p>}</section></div>}
     {giftListOpen && <div className="payment-layer" role="dialog" aria-modal="true" aria-label="Carica lista regalo"><button className="payment-backdrop" aria-label="Chiudi" onClick={() => setGiftListOpen(false)} /><section className="payment-dialog sale-selection-dialog"><header><div><p className="eyebrow">Lista regalo</p><h3>{selectedGiftList ? selectedGiftList.title : "Scegli una lista"}</h3></div><button type="button" aria-label="Chiudi" onClick={() => setGiftListOpen(false)}><X size={20} /></button></header>{giftLoading ? <p className="selection-empty">Caricamento in corso…</p> : !selectedGiftList ? giftLists.map((giftList) => <button type="button" className="selection-row" key={giftList.id} onClick={() => selectGiftList(giftList)}><strong>{giftList.title}</strong><span>{giftList.code} · {giftList.beneficiary_first_name} {giftList.beneficiary_last_name}</span></button>) : giftItems.map((item) => { const remaining = Number(item.reserved_quantity || 0) - Number(item.purchased_quantity || 0); return <div className="gift-item-row" key={item.id}><div><strong>{item.variant_data?.product_name || item.variant}</strong><span>{item.variant_data?.sku || ""} · Disponibili dalla lista: {remaining}</span></div><button type="button" className="secondary-action" disabled={remaining < 1} onClick={() => addGiftItem(item)}>Aggiungi</button></div>; })}{!giftLoading && !selectedGiftList && !giftLists.length && <p className="selection-empty">Nessuna lista articoli aperta.</p>}</section></div>}
     {paymentOpen && <div className="payment-layer" role="dialog" aria-modal="true" aria-label="Pagamento vendita">
 <button className="payment-backdrop" aria-label="Chiudi" disabled={paying} onClick={() => setPaymentOpen(false)} />
