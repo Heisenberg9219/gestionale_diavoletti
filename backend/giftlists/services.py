@@ -177,7 +177,9 @@ def add_contribution(
         choice.value for choice in GiftListContribution.PaymentMethod
     }:
         raise ValidationError("Il metodo di pagamento non è valido.")
-    return GiftListContribution.objects.create(
+    if not first_name.strip() or not last_name.strip():
+        raise ValidationError("Nome e cognome del conferente sono obbligatori.")
+    contribution = GiftListContribution(
         gift_list=gift_list,
         contributor_first_name=first_name.strip(),
         contributor_last_name=last_name.strip(),
@@ -187,6 +189,9 @@ def add_contribution(
         recorded_by=recorded_by,
         notes=notes.strip(),
     )
+    contribution.full_clean()
+    contribution.save()
+    return contribution
 
 
 @transaction.atomic

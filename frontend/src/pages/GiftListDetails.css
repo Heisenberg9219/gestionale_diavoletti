@@ -1,0 +1,33 @@
+.gift-detail-layer { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; }
+.gift-detail-backdrop { position: absolute; inset: 0; background: #18151a70; }
+.gift-detail-dialog { position: relative; box-sizing: border-box; width: min(920px, 100%); max-height: 90vh; overflow-y: auto; border-radius: 16px; padding: 24px; background: #fff; box-shadow: 0 18px 55px #0004; }
+.gift-detail-dialog header, .gift-contributions-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.gift-detail-dialog h3 { margin: 4px 0 0; font-size: 22px; }
+.gift-detail-close { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid #e2dddf; border-radius: 8px; background: #fff; cursor: pointer; }
+.gift-detail-summary { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 16px; padding: 20px 0; border-bottom: 1px solid #eeeaea; }
+.gift-detail-summary dt { font-size: 11px; color: #817b80; margin-bottom: 7px; }
+.gift-detail-summary dd { margin: 0; font-size: 13px; font-weight: 700; }
+.gift-contributions-heading { margin: 20px 0; }
+.gift-contributions-heading h4 { margin: 0 0 6px; font-size: 16px; }
+.gift-contributions-heading span { font-size: 13px; color: #817b80; }
+.gift-contributions-heading strong { margin-left: 6px; color: #18151a; }
+.gift-contribution-form { display: grid; grid-template-columns: 1fr 1fr .8fr .8fr; gap: 12px; padding: 16px; border-radius: 10px; background: #faf8f9; border: 1px solid #eeeaea; }
+.gift-contribution-form label { display: grid; gap: 6px; font-size: 12px; font-weight: 700; }
+.gift-contribution-form input, .gift-contribution-form select { box-sizing: border-box; width: 100%; min-width: 0; height: 40px; padding: 0 10px; border: 1px solid #ded9db; border-radius: 7px; font: inherit; background: #fff; }
+.gift-contribution-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; }
+.gift-contribution-table { overflow-x: auto; }
+.gift-contribution-table table { border-collapse: collapse; width: 100%; text-align: left; font-size: 13px; }
+.gift-contribution-table th { padding: 12px; font-size: 11px; color: #817b80; }
+.gift-contribution-table td { padding: 14px 12px; border-top: 1px solid #eeeaea; }
+.gift-contribution-table th:last-child, .gift-contribution-table td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.gift-detail-empty, .gift-detail-loading, .gift-detail-notes { color: #817b80; font-size: 13px; padding: 12px 0; }
+.gift-list-open { padding: 0; border: 0; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; justify-self: start; }
+.gift-list-open:hover { color: #b70018; text-decoration: underline; }
+.gift-lists-page .gift-list-actions { flex-wrap: wrap; gap: 6px; }
+@media (max-width: 650px) {
+  .gift-detail-layer { padding: 12px; }
+  .gift-detail-dialog { padding: 16px; }
+  .gift-detail-summary, .gift-contribution-form { grid-template-columns: 1fr 1fr; }
+  .gift-contributions-heading { align-items: flex-start; flex-direction: column; }
+}
+@media (max-width: 420px) { .gift-contribution-form { grid-template-columns: 1fr; } }

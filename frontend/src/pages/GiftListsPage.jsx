@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { CalendarHeart, Download, Plus, Search, Trash2, X } from "lucide-react";
 import { request } from "../api";
 import PaginatedRows from "../components/PaginatedRows";
+import GiftListDetails from "./GiftListDetails";
 import "../products.css";
 
 const list = (data) => data?.results || data || [];
@@ -12,6 +13,7 @@ const statusLabel = { OPEN: "Aperta", CLOSED: "Chiusa", CANCELLED: "Annullata" }
 
 export default function GiftListsPage() {
   const [lists, setLists] = useState([]); const [customers, setCustomers] = useState([]); const [locations, setLocations] = useState([]);
+  const [openedList, setOpenedList] = useState(null);
   const [query, setQuery] = useState(""); const [status, setStatus] = useState("OPEN"); const [formOpen, setFormOpen] = useState(false); const [form, setForm] = useState(emptyForm);
   const [message, setMessage] = useState(""); const [success, setSuccess] = useState(false); const [saving, setSaving] = useState(false); const [selected, setSelected] = useState([]);
   const load = async (search = query, selectedStatus = status) => { try { const params = new URLSearchParams({ page_size: "200" }); if (search.trim()) params.set("search", search.trim()); if (selectedStatus !== "ALL") params.set("status", selectedStatus); const [giftData, customerData, locationData] = await Promise.all([request(`/gift-lists/lists/?${params}`), request("/customers/customers/?page_size=200"), request("/core/locations/?page_size=200")]); setLists(list(giftData)); setCustomers(list(customerData)); setLocations(list(locationData)); } catch (error) { setSuccess(false); setMessage(error.message); } };
@@ -19,7 +21,22 @@ export default function GiftListsPage() {
   useEffect(() => { if (!message) return undefined; const timer = setTimeout(() => setMessage(""), 4000); return () => clearTimeout(timer); }, [message]);
   const update = (field, value) => setForm((current) => ({ ...current, [field]: value }));
   const openCreate = () => { setForm({ ...emptyForm, location: locations[0]?.id || "" }); setMessage(""); setFormOpen(true); };
-  async function createList(event) { event.preventDefault(); setSaving(true); setMessage(""); try { const payload = { ...form, code: `LIST-${Date.now()}`, customer: form.customer || null, event_date: form.event_date || null }; await request("/gift-lists/lists/", { method: "POST", body: JSON.stringify(payload) }); if (form.notifications_enabled && form.event_date) await request("/gift-lists/lists/refresh-notifications/", { method: "POST", body: JSON.stringify({}) }); setFormOpen(false); setForm(emptyForm); setSuccess(true); setMessage("Lista regalo creata correttamente."); setStatus("OPEN"); await load("", "OPEN"); } catch (error) { setSuccess(false); setMessage(error.message); } finally { setSaving(false); } }
+  async function createList(event) {
+    event.preventDefault(); setSaving(true); setMessage("");
+    try {
+      const payload = { ...form, code: `LIST-${Date.now()}`, customer: form.customer || null, event_date: form.event_date || null };
+      const created = await request("/gift-lists/lists/", { method: "POST", body: JSON.stringify(payload) });
+      setFormOpen(false); setForm(emptyForm); setQuery(""); setStatus("OPEN");
+      setOpenedList({ id: created.id, startAdding: created.mode === "CONTRIBUTIONS" });
+      setSuccess(true); setMessage("Lista regalo creata correttamente.");
+      await load("", "OPEN");
+      if (payload.notifications_enabled && payload.event_date) {
+        try { await request("/gift-lists/lists/refresh-notifications/", { method: "POST", body: JSON.stringify({}) }); }
+        catch (error) { setSuccess(false); setMessage(`Lista creata. Aggiornamento notifiche non riuscito: ${error.message}`); }
+      }
+    } catch (error) { setSuccess(false); setMessage(error.message); }
+    finally { setSaving(false); }
+  }
   const toggleSelected = (id) => setSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   const toggleAll = () => setSelected(selected.length === lists.length ? [] : lists.map((item) => item.id));
   const csv = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
@@ -35,6 +52,7 @@ export default function GiftListsPage() {
     {message && <p className={success ? "operation-success" : "catalog-error"}>{message}</p>}
     <div className="gift-list-filters"><form className="products-search" onSubmit={(event) => { event.preventDefault(); load(); }}><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cerca lista o beneficiario" /><button>Ricerca</button></form><div className="gift-status-tabs">{[["OPEN", "Aperte"], ["CLOSED", "Chiuse"], ["CANCELLED", "Annullate"], ["ALL", "Tutte"]].map(([value, label]) => <button type="button" key={value} className={status === value ? "active" : ""} onClick={() => { setStatus(value); load(query, value); }}>{label}</button>)}</div></div>
     {selected.length > 0 && <div className="gift-selection-actions"><span>{selected.length} {selected.length === 1 ? "lista selezionata" : "liste selezionate"}</span><button type="button" onClick={() => setSelected([])}>Deseleziona</button><button type="button" onClick={downloadSelected}><Download size={16} /> Scarica CSV</button><button type="button" className="delete-selected" onClick={deleteSelected}><Trash2 size={16} /> Elimina</button></div>}
-    <article className="products-list"><div className="gift-list-heading"><span className="gift-list-check"><input type="checkbox" aria-label="Seleziona tutte le liste" checked={lists.length > 0 && selected.length === lists.length} onChange={toggleAll} /></span><span>Lista</span><span>Beneficiario</span><span>Modalità</span><span>Evento</span><span>Stato</span><span>Azioni</span></div>{!lists.length ? <div className="empty-product-state"><CalendarHeart size={28} /><strong>Nessuna lista regalo trovata</strong><span>Crea una lista nascita o compleanno per iniziare.</span></div> : <PaginatedRows items={lists} resetKey={`${query}-${status}`}>{(rows) => rows.map((giftList) => <div className={selected.includes(giftList.id) ? "gift-list-row selected" : "gift-list-row"} key={giftList.id}><span className="gift-list-check"><input type="checkbox" aria-label={`Seleziona ${giftList.title}`} checked={selected.includes(giftList.id)} onChange={() => toggleSelected(giftList.id)} /></span><div><strong>{giftList.title}</strong><span>{giftList.code} · {typeLabel[giftList.list_type]}</span></div><span>{giftList.beneficiary_first_name} {giftList.beneficiary_last_name}</span><span>{modeLabel[giftList.mode]}</span><span>{date(giftList.event_date)}</span><em className={`gift-status ${giftList.status.toLowerCase()}`}>{statusLabel[giftList.status]}</em><div className="gift-list-actions">{giftList.status === "OPEN" && <button type="button" onClick={() => closeList(giftList)}>Chiudi lista</button>}</div></div>)}</PaginatedRows>}</article>
+    <article className="products-list"><div className="gift-list-heading"><span className="gift-list-check"><input type="checkbox" aria-label="Seleziona tutte le liste" checked={lists.length > 0 && selected.length === lists.length} onChange={toggleAll} /></span><span>Lista</span><span>Beneficiario</span><span>Modalità</span><span>Evento</span><span>Stato</span><span>Azioni</span></div>{!lists.length ? <div className="empty-product-state"><CalendarHeart size={28} /><strong>Nessuna lista regalo trovata</strong><span>Crea una lista nascita o compleanno per iniziare.</span></div> : <PaginatedRows items={lists} resetKey={`${query}-${status}`}>{(rows) => rows.map((giftList) => <div className={selected.includes(giftList.id) ? "gift-list-row selected" : "gift-list-row"} key={giftList.id}><span className="gift-list-check"><input type="checkbox" aria-label={`Seleziona ${giftList.title}`} checked={selected.includes(giftList.id)} onChange={() => toggleSelected(giftList.id)} /></span><div><button type="button" className="gift-list-open" onClick={() => setOpenedList({ id: giftList.id })}><strong>{giftList.title}</strong></button><span>{giftList.code} · {typeLabel[giftList.list_type]}</span></div><span>{giftList.beneficiary_first_name} {giftList.beneficiary_last_name}</span><span>{modeLabel[giftList.mode]}</span><span>{date(giftList.event_date)}</span><em className={`gift-status ${giftList.status.toLowerCase()}`}>{statusLabel[giftList.status]}</em><div className="gift-list-actions"><button type="button" onClick={() => setOpenedList({ id: giftList.id })}>Apri</button>{giftList.status === "OPEN" && <button type="button" onClick={() => closeList(giftList)}>Chiudi lista</button>}</div></div>)}</PaginatedRows>}</article>
+    {openedList && <GiftListDetails key={openedList.id} giftListId={openedList.id} startAdding={openedList.startAdding} onClose={() => setOpenedList(null)} />}
   </section>;
 }
