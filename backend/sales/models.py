@@ -314,6 +314,13 @@ class SaleLine(UUIDTimeStampedModel):
         on_delete=models.PROTECT,
         related_name="sale_lines",
     )
+    gift_list_item = models.ForeignKey(
+        "giftlists.GiftListItem",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="sale_lines",
+    )
     quantity = models.PositiveIntegerField()
     sku_snapshot = models.CharField(max_length=64)
     product_name_snapshot = models.CharField(max_length=160)

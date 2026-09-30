@@ -371,6 +371,7 @@ def set_sale_line(
         )
 
     line.quantity = quantity
+    line.gift_list_item = gift_list_item
     line.sku_snapshot = variant.sku
     line.product_name_snapshot = variant.product.name
     line.color_snapshot = (
@@ -802,6 +803,15 @@ def confirm_sale(
                 "updated_at",
             )
         )
+
+        if line.gift_list_item_id:
+            from giftlists.services import record_item_purchase
+            record_item_purchase(
+                item=line.gift_list_item,
+                sale_line=line,
+                quantity=line.quantity,
+                recorded_by=confirmed_by,
+            )
 
         from inventory.models import StockBalance
         from notifications.services import notify_stock_depleted_to_owners

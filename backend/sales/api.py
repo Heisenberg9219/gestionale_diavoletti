@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from api.permissions import IsBusinessOperator
 from api.viewsets import OwnerWriteReadViewSet
 from catalog.models import ProductVariant
+from customers.models import Customer
 from giftlists.models import GiftListItem, ReservedStockSaleAuthorization
 from .models import CashRegister, CashSession, Sale, SaleLine, SalePayment
 from .serializers import CashRegisterSerializer, CashSessionSerializer, CloseCashSerializer, LineCommandSerializer, OpenCashSerializer, PaymentCommandSerializer, SaleLineSerializer, SalePaymentSerializer, SaleSerializer, TotalOverrideCommandSerializer
@@ -106,6 +107,15 @@ class SaleViewSet(viewsets.ModelViewSet):
                 ))
         return response
     def perform_create(self, serializer): serializer.save(opened_by=self.request.user)
+    @action(detail=True, methods=("post",), url_path="set-customer")
+    def set_customer(self, request, pk=None):
+        sale = Sale.objects.select_for_update().get(pk=self.get_object().pk)
+        if sale.status != Sale.Status.OPEN or sale.payments.exists():
+            raise ValidationError("Il cliente può essere modificato solo prima del pagamento.")
+        customer_id = request.data.get("customer")
+        sale.customer = get_object_or_404(Customer, pk=customer_id) if customer_id else None
+        sale.save(update_fields=("customer", "updated_at"))
+        return Response(self.get_serializer(sale).data)
     @extend_schema(request=RemoveLineSerializer)
     @action(detail=True, methods=("post",), url_path="remove-line")
     def remove_line(self, request, pk=None):
