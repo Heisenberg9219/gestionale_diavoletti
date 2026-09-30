@@ -173,6 +173,24 @@
 .ocr-review-modal header span,
 .ocr-review-modal footer p { color: #817b80; font-size: 13px; }
 
+.ocr-review-progress {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  padding: 28px;
+  background: #fffffff2;
+  color: #716a70;
+  text-align: center;
+}
+
+.ocr-review-progress svg { color: #ed001b; animation: documents-spin 1s linear infinite; }
+.ocr-review-progress strong { color: #302b2f; font-size: 16px; }
+.ocr-review-progress span { max-width: 360px; font-size: 13px; }
+
 .ocr-review-feedback {
   margin: 0 26px 16px;
   padding: 11px 13px;
