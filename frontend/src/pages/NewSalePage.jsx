@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Barcode, Minus, Plus, Search, ShoppingCart } from "lucide-react";
+import { Barcode, Minus, Plus, Search, ShoppingCart, Trash2, X } from "lucide-react";
 import { request } from "../api";
 import "../new-sale.css";
 
@@ -14,6 +14,24 @@ export default function NewSalePage({ onNavigate }) {
   const [matches, setMatches] = useState([]);
   const [labels, setLabels] = useState({});
   const [message, setMessage] = useState("");
+  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState("CASH");
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [cashReceived, setCashReceived] = useState("");
+  const [paymentReference, setPaymentReference] = useState("");
+  const [paymentError, setPaymentError] = useState("");
+  const [paying, setPaying] = useState(false);
+  const [customerOpen, setCustomerOpen] = useState(false);
+  const [customerQuery, setCustomerQuery] = useState("");
+  const [customers, setCustomers] = useState([]);
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [giftListOpen, setGiftListOpen] = useState(false);
+  const [giftLists, setGiftLists] = useState([]);
+  const [selectedGiftList, setSelectedGiftList] = useState(null);
+  const [giftItems, setGiftItems] = useState([]);
+  const [giftLoading, setGiftLoading] = useState(false);
+  const [voucherCode, setVoucherCode] = useState("");
+  const [voucherMessage, setVoucherMessage] = useState("");
   const inputRef = useRef(null);
 
   useEffect(() => {
@@ -26,7 +44,7 @@ export default function NewSalePage({ onNavigate }) {
 
   async function ensureSale() {
     if (sale) return sale;
-    const created = await request("/sales/sales/", { method: "POST", body: JSON.stringify({ location: register.location, cash_session: session.id }) });
+    const created = await request("/sales/sales/", { method: "POST", body: JSON.stringify({ location: register.location, cash_session: session.id, customer: selectedCustomer?.id || null }) });
     setSale(created);
     return created;
   }
@@ -55,17 +73,192 @@ export default function NewSalePage({ onNavigate }) {
   }
 
   async function changeQuantity(line, delta) {
-    if (line.quantity + delta < 1) return;
+    if (line.quantity + delta < 1) return removeLine(line);
     try {
       await request(`/sales/sales/${sale.id}/set-line/`, { method: "POST", body: JSON.stringify({ variant: line.variant, quantity: line.quantity + delta }) });
       setSale(await request(`/sales/sales/${sale.id}/`));
     } catch (err) { setMessage(err.message); }
   }
+  async function removeLine(line) {
+    try {
+      await request(`/sales/sales/${sale.id}/remove-line/`, { method: "POST", body: JSON.stringify({ line: line.id, reason: "Articolo rimosso dal carrello" }) });
+      setSale(await request(`/sales/sales/${sale.id}/`));
+      setMessage("Articolo rimosso dal carrello.");
+    } catch (err) { setMessage(`Impossibile rimuovere l'articolo: ${err.message}`); }
+  }
+  async function searchCustomers(value = customerQuery) {
+    try { setCustomers(list(await request(`/customers/customers/?search=${encodeURIComponent(value.trim())}`))); }
+    catch (error) { setMessage(`Ricerca clienti non disponibile: ${error.message}`); }
+  }
+  async function selectCustomer(customer) {
+    try {
+      if (sale) setSale(await request(`/sales/sales/${sale.id}/set-customer/`, { method: "POST", body: JSON.stringify({ customer: customer.id }) }));
+      setSelectedCustomer(customer); setCustomerOpen(false); setMessage(`Cliente associato: ${customer.full_name}.`);
+    } catch (error) { setMessage(`Impossibile associare il cliente: ${error.message}`); }
+  }
+  async function openGiftLists() {
+    setGiftListOpen(true); setSelectedGiftList(null); setGiftItems([]); setGiftLoading(true);
+    try { setGiftLists(list(await request("/gift-lists/lists/?status=OPEN&mode=PRODUCTS"))); }
+    catch (error) { setMessage(`Impossibile caricare le liste regalo: ${error.message}`); }
+    finally { setGiftLoading(false); }
+  }
+  async function selectGiftList(giftList) {
+    setSelectedGiftList(giftList); setGiftLoading(true);
+    try {
+      const [items, variants] = await Promise.all([request(`/gift-lists/items/?gift_list=${giftList.id}`), request("/catalog/variants/?page_size=200")]);
+      const variantsById = Object.fromEntries(list(variants).map((variant) => [variant.id, variant]));
+      setGiftItems(list(items).map((item) => ({ ...item, variant_data: variantsById[item.variant] })));
+    } catch (error) { setMessage(`Impossibile caricare gli articoli della lista: ${error.message}`); }
+    finally { setGiftLoading(false); }
+  }
+  async function addGiftItem(item) {
+    const quantity = Number(item.reserved_quantity || 0) - Number(item.purchased_quantity || 0);
+    if (quantity < 1) return setMessage("Questa riga della lista è già stata acquistata.");
+    try {
+      const currentSale = await ensureSale();
+      const existing = currentSale.lines?.find((line) => line.variant === item.variant);
+      await request(`/sales/sales/${currentSale.id}/set-line/`, { method: "POST", body: JSON.stringify({ variant: item.variant, quantity: (existing?.quantity || 0) + quantity, gift_list_item: item.id }) });
+      setSale(await request(`/sales/sales/${currentSale.id}/`));
+      setLabels((current) => ({ ...current, [item.variant]: `${item.variant_data?.product_name || "Articolo lista"} · ${item.variant_data?.color_name || ""} ${item.variant_data?.size_label || ""}`.trim() }));
+      setMessage(`Articolo della lista ${selectedGiftList.code} aggiunto al carrello.`);
+    } catch (error) { setMessage(`Impossibile aggiungere l'articolo della lista: ${error.message}`); }
+  }
 
-  if (!session || !register) return <section className="new-sale-empty"><Barcode size={28} /><h2>Apri prima la cassa</h2><p>Per iniziare una vendita è necessaria una sessione di cassa aperta.</p><button className="primary-action" onClick={() => onNavigate("Cassa")}>Vai alla cassa</button></section>;
+  const paymentTotal = (currentSale) => Number(currentSale?.final_total_amount || 0) - (currentSale?.payments || []).reduce((total, payment) => total + Number(payment.amount || 0), 0);
+  async function openPayment() {
+    try {
+      const currentSale = await request(`/sales/sales/${sale.id}/`);
+      const remaining = Math.max(0, paymentTotal(currentSale));
+      setSale(currentSale); setPaymentMethod("CASH"); setPaymentAmount(remaining.toFixed(2)); setCashReceived(remaining.toFixed(2)); setPaymentReference(""); setPaymentError(""); setPaymentOpen(true);
+    } catch (error) { setMessage(`Impossibile preparare il pagamento: ${error.message}`); }
+  }
+  async function applyVoucher() {
+    const code = voucherCode.trim().toUpperCase();
+    if (!code) return setVoucherMessage("Inserisci il codice del buono.");
+    try {
+      const vouchers = list(await request(`/vouchers/vouchers/?search=${encodeURIComponent(code)}&status=ACTIVE`));
+      const voucher = vouchers.find((item) => item.code?.toUpperCase() === code);
+      if (!voucher) return setVoucherMessage("Buono non trovato o non utilizzabile.");
+      const remaining = Math.max(0, paymentTotal(sale));
+      await request(`/vouchers/vouchers/${voucher.id}/redeem/`, { method: "POST", body: JSON.stringify({ sale: sale.id, amount: remaining.toFixed(2) }) });
+      const refreshed = await request(`/sales/sales/${sale.id}/`);
+      const newRemaining = Math.max(0, paymentTotal(refreshed));
+      setSale(refreshed); setPaymentAmount(newRemaining.toFixed(2)); setCashReceived(newRemaining.toFixed(2)); setVoucherCode(""); setVoucherMessage(`Buono applicato: ${euro.format(Math.min(Number(voucher.current_balance || 0), remaining))}.`);
+    } catch (error) { setVoucherMessage(`Impossibile applicare il buono: ${error.message}`); }
+  }
+  async function completePayment() {
+    const amount = Number(String(paymentAmount).replace(",", "."));
+    const received = Number(String(cashReceived).replace(",", "."));
+    if (!amount || amount <= 0) return setPaymentError("Inserisci un importo di pagamento valido.");
+    if (paymentMethod === "CASH" && (!received || received < amount)) return setPaymentError("Per i contanti indica un importo ricevuto almeno pari al totale.");
+    setPaying(true); setPaymentError("");
+    try {
+      await request(`/sales/sales/${sale.id}/add-payment/`, { method: "POST", body: JSON.stringify({ method: paymentMethod, amount: amount.toFixed(2), cash_received_amount: paymentMethod === "CASH" ? received.toFixed(2) : undefined, transaction_reference: paymentReference }) });
+      const confirmed = await request(`/sales/sales/${sale.id}/confirm/`, { method: "POST", body: JSON.stringify({}) });
+      setPaymentOpen(false); setSale(null); setLabels({}); setMessage(`Vendita ${confirmed.number} registrata correttamente.`); inputRef.current?.focus();
+    } catch (error) { setPaymentError(`Pagamento non completato: ${error.message}`); }
+    finally { setPaying(false); }
+  }
+
+  if (!session || !register) return <section className="new-sale-empty">
+<Barcode size={28} />
+<h2>Apri prima la cassa</h2>
+<p>Per iniziare una vendita è necessaria una sessione di cassa aperta.</p>
+<button className="primary-action" onClick={() => onNavigate("Cassa")}>Vai alla cassa</button>
+</section>;
   return <section className="new-sale-page">
-    <div className="page-title-row"><div><p className="eyebrow">Cassa · {register.name}</p><h2>Nuova vendita</h2><span>Scansiona un barcode o cerca un articolo.</span></div><div className="sale-draft-badge"><ShoppingCart size={18} />{sale ? "Scontrino in corso" : "Scontrino vuoto"}</div></div>
-    <div className="pos-layout"><section className="pos-products"><form className="pos-search" onSubmit={search}><Barcode size={21} /><input ref={inputRef} autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Scansiona barcode o cerca per SKU / nome" /><button aria-label="Cerca"><Search size={19} /></button></form>{message && <p className="pos-message">{message}</p>}{matches.length > 1 && <div className="product-matches">{matches.map((variant) => <button key={variant.id} onClick={() => addVariant(variant)}><div><strong>{variant.product_name}</strong><span>{variant.sku} · {variant.color_name || ""} {variant.size_label || ""}</span></div><b>Seleziona</b></button>)}</div>}<div className="pos-hint"><Barcode size={19} /><span>Con uno scanner USB il codice viene inserito qui automaticamente: premi Invio per aggiungere l’articolo.</span></div></section>
-      <aside className="receipt-panel"><div className="receipt-heading"><div><p>Scontrino</p><h3>{sale?.number || "Nuova vendita"}</h3></div><span>{sale?.lines?.length || 0} righe</span></div><div className="receipt-lines">{sale?.lines?.length ? sale.lines.map((line) => <div className="receipt-line" key={line.id}><div><strong>{labels[line.variant] || "Articolo aggiunto"}</strong><span>{euro.format(Number(line.net_amount || 0))}</span></div><div className="quantity-control"><button onClick={() => changeQuantity(line, -1)} aria-label="Diminuisci quantità"><Minus size={15} /></button><b>{line.quantity}</b><button onClick={() => changeQuantity(line, 1)} aria-label="Aumenta quantità"><Plus size={15} /></button></div></div>) : <p className="receipt-empty">Lo scontrino è pronto. Aggiungi il primo articolo.</p>}</div><div className="receipt-total"><span>Totale</span><strong>{euro.format(Number(sale?.final_total_amount || 0))}</strong></div><button className="primary-action receipt-pay" disabled={!sale?.lines?.length}>Vai al pagamento</button></aside></div>
+    <div className="page-title-row">
+<div>
+<p className="eyebrow">Cassa · {register.name}</p>
+<h2>Nuova vendita</h2>
+<span>Scansiona un barcode o cerca un articolo.</span>
+</div>
+<div className="sale-draft-badge">
+<ShoppingCart size={18} />{sale ? "Scontrino in corso" : "Scontrino vuoto"}</div>
+</div>
+    <div className="pos-layout">
+<section className="pos-products">
+<form className="pos-search" onSubmit={search}>
+<Barcode size={21} />
+<input ref={inputRef} autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Scansiona barcode o cerca per SKU / nome" />
+<button aria-label="Cerca">
+<Search size={19} />
+</button>
+</form>{message && <p className="pos-message">{message}</p>}{matches.length > 1 && <div className="product-matches">{matches.map((variant) => <button key={variant.id} onClick={() => addVariant(variant)}>
+<div>
+<strong>{variant.product_name}</strong>
+<span>{variant.sku} · {variant.color_name || ""} {variant.size_label || ""}</span>
+</div>
+<b>Seleziona</b>
+</button>)}</div>}<div className="pos-hint">
+<Barcode size={19} />
+<span>Con uno scanner USB il codice viene inserito qui automaticamente: premi Invio per aggiungere l’articolo.</span>
+</div>
+</section>
+      <aside className="receipt-panel">
+<div className="receipt-heading">
+<div>
+<p>Scontrino</p>
+<h3>{sale?.number || "Nuova vendita"}</h3>
+</div>
+<span>{sale?.lines?.length || 0} righe</span>
+</div>
+<div className="receipt-lines">{sale?.lines?.length ? sale.lines.map((line) => <div className="receipt-line" key={line.id}>
+<div>
+<strong>{labels[line.variant] || "Articolo aggiunto"}</strong>
+<span>{euro.format(Number(line.net_amount || 0))}</span>
+</div>
+<div className="quantity-control">
+<button onClick={() => changeQuantity(line, -1)} aria-label="Diminuisci quantità">
+<Minus size={15} />
+</button>
+<b>{line.quantity}</b>
+<button onClick={() => changeQuantity(line, 1)} aria-label="Aumenta quantità">
+<Plus size={15} />
+</button>
+<button className="remove-sale-line" onClick={() => removeLine(line)} aria-label="Rimuovi articolo">
+<Trash2 size={14} />
+</button>
+</div>
+</div>) : <p className="receipt-empty">Lo scontrino è pronto. Aggiungi il primo articolo.</p>}</div>
+<div className="receipt-total">
+<span>Totale</span>
+<strong>{euro.format(Number(sale?.final_total_amount || 0))}</strong>
+</div>
+<button className="primary-action receipt-pay" disabled={!sale?.lines?.length} onClick={openPayment}>Vai al pagamento</button>
+</aside>
+</div>
+    {paymentOpen && <div className="payment-layer" role="dialog" aria-modal="true" aria-label="Pagamento vendita">
+<button className="payment-backdrop" aria-label="Chiudi" disabled={paying} onClick={() => setPaymentOpen(false)} />
+<section className="payment-dialog">
+<header>
+<div>
+<p className="eyebrow">Pagamento</p>
+<h3>Concludi la vendita</h3>
+</div>
+<button type="button" aria-label="Chiudi" disabled={paying} onClick={() => setPaymentOpen(false)}>
+<X size={20} />
+</button>
+</header>
+<div className="payment-total">
+<span>Totale da pagare</span>
+<strong>{euro.format(Number(paymentAmount || 0))}</strong>
+</div>
+<label>Metodo di pagamento<select value={paymentMethod} disabled={paying} onChange={(event) => setPaymentMethod(event.target.value)}>
+<option value="CASH">Contanti</option>
+<option value="CARD">Carta</option>
+<option value="OTHER">Altro</option>
+</select>
+</label>
+<label>Importo<input inputMode="decimal" value={paymentAmount} disabled={paying} onChange={(event) => { setPaymentAmount(event.target.value); if (paymentMethod === "CASH") setCashReceived(event.target.value); }} />
+</label>{paymentMethod === "CASH" && <label>Contanti ricevuti<input inputMode="decimal" value={cashReceived} disabled={paying} onChange={(event) => setCashReceived(event.target.value)} />
+</label>}{paymentMethod !== "CASH" && <label>Riferimento pagamento <small>Facoltativo</small>
+<input value={paymentReference} disabled={paying} onChange={(event) => setPaymentReference(event.target.value)} placeholder="Es. numero transazione" />
+</label>}{paymentMethod === "CASH" && Number(cashReceived || 0) >= Number(paymentAmount || 0) && <p className="payment-change">Resto: {euro.format(Math.max(0, Number(cashReceived || 0) - Number(paymentAmount || 0)))}</p>}{paymentError && <p className="payment-error" role="alert">{paymentError}</p>}<footer>
+<button type="button" className="secondary-action" disabled={paying} onClick={() => setPaymentOpen(false)}>Annulla</button>
+<button type="button" className="primary-action" disabled={paying} onClick={completePayment}>{paying ? "Registrazione..." : "Conferma pagamento"}</button>
+</footer>
+</section>
+</div>}
   </section>;
 }
