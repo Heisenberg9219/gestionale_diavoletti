@@ -73,7 +73,7 @@ export default function CatalogPage() {
     return created.id;
   }
 
-  async function quickAdd(kind) {
+  async function quickAdd(kind, target = "form") {
     const labels = { brands: "della marca", categories: "della categoria", colors: "del colore" };
     const name = window.prompt(`Nome ${labels[kind]}`)?.trim();
     if (!name) return;
@@ -83,7 +83,9 @@ export default function CatalogPage() {
         method: "POST", body: JSON.stringify({ code, name }),
       });
       setOptions((current) => ({ ...current, [kind]: [...current[kind], created] }));
-      update({ brands: "brand", categories: "category", colors: "color" }[kind], created.id);
+      const field = { brands: "brand", categories: "category", colors: "color" }[kind];
+      if (target === "bulk") updateBulk(field, created.id);
+      else update(field, created.id);
     } catch (requestError) { setError(requestError.message); }
   }
 
@@ -167,11 +169,11 @@ export default function CatalogPage() {
     {selected.length > 0 && <section className="catalog-bulk-panel">
       <div className="catalog-bulk-heading"><strong>{selected.length} righe selezionate</strong><span>Applica solo i campi compilati.</span></div>
       <div className="catalog-bulk-fields">
-        <Field label="Marca"><select value={bulk.brand} onChange={(event) => updateBulk("brand", event.target.value)}><option value="">Non modificare</option>{options.brands.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-        <Field label="Categoria"><select value={bulk.category} onChange={(event) => updateBulk("category", event.target.value)}><option value="">Non modificare</option>{options.categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+        <Field label="Marca"><span className="select-with-add"><select value={bulk.brand} onChange={(event) => updateBulk("brand", event.target.value)}><option value="">Non modificare</option>{options.brands.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button type="button" onClick={() => quickAdd("brands", "bulk")} title="Aggiungi marca"><Plus size={16} /></button></span></Field>
+        <Field label="Categoria"><span className="select-with-add"><select value={bulk.category} onChange={(event) => updateBulk("category", event.target.value)}><option value="">Non modificare</option>{options.categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button type="button" onClick={() => quickAdd("categories", "bulk")} title="Aggiungi categoria"><Plus size={16} /></button></span></Field>
         <Field label="Tipo collezione"><select value={bulk.season_type} onChange={(event) => updateBulk("season_type", event.target.value)}><option value="">Non modificare</option><option value="SPRING_SUMMER">Primavera/Estate</option><option value="AUTUMN_WINTER">Autunno/Inverno</option></select></Field>
         <Field label="Anno collezione"><input type="number" min="2000" max="2100" disabled={!bulk.season_type} value={bulk.season_year} onChange={(event) => updateBulk("season_year", event.target.value)} /></Field>
-        <Field label="Colore"><select value={bulk.color} onChange={(event) => updateBulk("color", event.target.value)}><option value="">Non modificare</option>{options.colors.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+        <Field label="Colore"><span className="select-with-add"><select value={bulk.color} onChange={(event) => updateBulk("color", event.target.value)}><option value="">Non modificare</option>{options.colors.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button type="button" onClick={() => quickAdd("colors", "bulk")} title="Aggiungi colore"><Plus size={16} /></button></span></Field>
         <Field label="Taglia"><select value={bulk.size} onChange={(event) => updateBulk("size", event.target.value)}><option value="">Non modificare</option>{options.sizes.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></Field>
         <Field label="Prezzo vendita"><input type="number" min="0.01" step="0.01" value={bulk.sale_price} onChange={(event) => updateBulk("sale_price", event.target.value)} placeholder="Non modificare" /></Field>
       </div>
