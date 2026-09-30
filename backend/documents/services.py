@@ -1,3 +1,4 @@
+import re
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
 from uuid import uuid4
@@ -198,6 +199,30 @@ def _next_sku():
     sequence.last_number += 1
     sequence.save(update_fields=("last_number", "updated_at"))
     return f"SKU-{sequence.last_number:06d}"
+
+
+_PROGRESSIVE_SKU = re.compile(r"^SKU-(\d+)$", re.IGNORECASE)
+
+
+def _advance_sku_sequence_from_review(review):
+    """Persist the highest progressive SKU only when a proposal is saved."""
+    from catalog.models import SkuSequence
+
+    highest = 0
+    for item in review.get("items", []):
+        if not isinstance(item, dict) or item.get("variant_id") not in (None, "", "__new__"):
+            continue
+        for variant in (item.get("new_variant") or {}).get("variants") or []:
+            match = _PROGRESSIVE_SKU.match(str(variant.get("sku") or "").strip())
+            if match:
+                highest = max(highest, int(match.group(1)))
+    if not highest:
+        return
+    sequence, _ = SkuSequence.objects.get_or_create(key="GLOBAL")
+    sequence = SkuSequence.objects.select_for_update().get(pk=sequence.pk)
+    if highest > sequence.last_number:
+        sequence.last_number = highest
+        sequence.save(update_fields=("last_number", "updated_at"))
 
 
 def _proposal_supplier(*, supplier_id, supplier_name, vat_number):
@@ -911,6 +936,8 @@ def save_ocr_review(*, attachment, analysis_id, review):
     review = dict(review, status="DRAFT", conflicts=validate_ocr_review(review))
     review.pop("receipt_id", None)
     review.pop("imported_at", None)
+    _advance_sku_sequence_from_review(review)
+    review["_sku_sequence_committed"] = True
     analysis.proposed_data = dict(analysis.proposed_data, review=review)
     analysis.save(update_fields=("proposed_data", "updated_at"))
     return analysis

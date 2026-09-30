@@ -80,26 +80,28 @@ class ProductVariantViewSet(CatalogViewSet):
         return queryset.distinct()
 
     @action(detail=False, methods=("post",), url_path="reserve-skus")
-    @transaction.atomic
     def reserve_skus(self, request):
-        """Reserve globally unique progressive SKUs for an editable OCR proposal."""
+        """Preview progressive SKUs without advancing the persisted counter."""
         try:
             count = int(request.data.get("count", 1))
         except (TypeError, ValueError):
             return Response({"detail": "Il numero di SKU richiesti non è valido."}, status=400)
         if not 1 <= count <= 200:
             return Response({"detail": "Puoi generare da 1 a 200 SKU alla volta."}, status=400)
-        sequence, _ = SkuSequence.objects.get_or_create(key="GLOBAL")
-        sequence = SkuSequence.objects.select_for_update().get(pk=sequence.pk)
+        sequence = SkuSequence.objects.filter(key="GLOBAL").first()
+        last_number = sequence.last_number if sequence else 0
+        excluded = {
+            str(sku).strip().upper()
+            for sku in request.data.get("exclude_skus", [])
+            if str(sku).strip()
+        }
         skus = []
-        next_number = sequence.last_number
+        next_number = last_number
         while len(skus) < count:
             next_number += 1
             sku = f"SKU-{next_number:06d}"
-            if not ProductVariant.objects.filter(sku__iexact=sku).exists():
+            if sku not in excluded and not ProductVariant.objects.filter(sku__iexact=sku).exists():
                 skus.append(sku)
-        sequence.last_number = next_number
-        sequence.save(update_fields=("last_number", "updated_at"))
         return Response({"skus": skus})
 
     @action(detail=False, methods=("post",), url_path="bulk-update")
