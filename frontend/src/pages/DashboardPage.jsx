@@ -139,7 +139,7 @@ export default function DashboardPage({ user, onLogout }) {
       <Sidebar active={active} onNavigate={setActive} onLogout={onLogout} mobileOpen={mobileMenu} onClose={() => setMobileMenu(false)} allowedPages={allowedPages} />
       <style>{`
         .mobile-menu-button, .mobile-sidebar-close, .mobile-sidebar-backdrop { display: none; }
-        .dashboard-main > :not(.dashboard-watermark):not(.mobile-dashboard-nav):not(style) { position: relative; z-index: 1; }
+        :where(.dashboard-main > :not(.dashboard-watermark):not(.mobile-dashboard-nav):not(style)) { position: relative; }
         .loyalty-form > button:nth-last-child(2), .loyalty-form > button:last-child { width: 135px; min-width: 135px; padding: 0 14px; }
         .loyalty-form > button:last-child { grid-column: 3; justify-self: end; }
         .loyalty-form > button:nth-last-child(2) { grid-column: 4; justify-self: start; }
@@ -150,7 +150,7 @@ export default function DashboardPage({ user, onLogout }) {
         .vouchers-heading, .voucher-row { grid-template-columns: 34px minmax(180px,1.25fr) minmax(130px,.9fr) 130px 110px 100px; }
         .table-row-check { display: grid !important; place-items: center; }
         .table-row-check input { width: 17px; height: 17px; accent-color: #178c82; cursor: pointer; }
-        .dashboard-header { position: relative; z-index: 40; }
+        .dashboard-header { position: relative; z-index: 20; }
         .notification-menu { position: relative; z-index: 45; }
         .notification-menu > .icon-button i { display: none; }
         .notification-menu > .icon-button.has-unread i { display: block; }
