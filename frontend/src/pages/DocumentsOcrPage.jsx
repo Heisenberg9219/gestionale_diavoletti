@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Eye, FileText, FileUp, LoaderCircle, Plus, ScanText, Search, X } from "lucide-react";
+import { Eye, FileText, FileUp, LoaderCircle, Plus, ScanText, Search, Trash2, X } from "lucide-react";
 import { request } from "../api";
 import PaginatedRows from "../components/PaginatedRows";
 import "../products.css";
@@ -124,6 +124,7 @@ function makeReview(analysis, catalog = { taxes: [] }, markup = "") {
 export default function DocumentsOcrPage() {
   const [documents, setDocuments] = useState([]); const [types, setTypes] = useState([]); const [attachments, setAttachments] = useState([]); const [analyses, setAnalyses] = useState([]); const [variants, setVariants] = useState([]); const [suppliers, setSuppliers] = useState([]); const [locations, setLocations] = useState([]); const [catalog, setCatalog] = useState({ products: [], brands: [], categories: [], taxes: [], colors: [], sizes: [] }); const [markup, setMarkup] = useState(""); const [documentsLoading, setDocumentsLoading] = useState(true);
   const [query, setQuery] = useState(""); const [formOpen, setFormOpen] = useState(false); const [form, setForm] = useState(blank()); const [saving, setSaving] = useState(false); const [message, setMessage] = useState(""); const [success, setSuccess] = useState(false);
+  const [selectedDocuments, setSelectedDocuments] = useState([]); const [deletingDocuments, setDeletingDocuments] = useState(false);
   const [reviewAnalysis, setReviewAnalysis] = useState(null); const [review, setReview] = useState(null); const [reviewSaving, setReviewSaving] = useState(false); const [skuLoading, setSkuLoading] = useState(false); const [reviewAction, setReviewAction] = useState(""); const [reviewError, setReviewError] = useState(""); const [reviewNotice, setReviewNotice] = useState(""); const [validationIssues, setValidationIssues] = useState([]);
   const proposalVersions = analyses
     .filter((entry) => entry.attachment === reviewAnalysis?.attachment && entry.status === "SUCCEEDED" && entry.proposed_data?.review)
@@ -160,7 +161,20 @@ export default function DocumentsOcrPage() {
     return () => clearTimeout(timer);
   }, [reviewError]);
 
-  const visible = useMemo(() => documents.filter((document) => `${document.title} ${document.number} ${document.counterparty_name}`.toLowerCase().includes(query.toLowerCase())), [documents, query]);
+  const visible = useMemo(() => documents.filter((document) => document.status !== "CANCELLED" && `${document.title} ${document.number} ${document.counterparty_name}`.toLowerCase().includes(query.toLowerCase())), [documents, query]);
+  const toggleSelectedDocument = (id) => setSelectedDocuments((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  const toggleAllDocuments = () => setSelectedDocuments((current) => current.length === visible.length ? [] : visible.map((document) => document.id));
+  async function deleteSelectedDocuments() {
+    if (!selectedDocuments.length || !window.confirm(`Cancellare ${selectedDocuments.length} ${selectedDocuments.length === 1 ? "documento" : "documenti"} selezionati?`)) return;
+    setDeletingDocuments(true);
+    try {
+      const result = await request("/documents/documents/cancel-selected/", { method: "POST", body: JSON.stringify({ document_ids: selectedDocuments }) });
+      setSelectedDocuments([]);
+      notice(`${result.cancelled} ${result.cancelled === 1 ? "documento cancellato" : "documenti cancellati"} correttamente.`);
+      await load();
+    } catch (error) { notice(`Impossibile cancellare i documenti: ${error.message}`, false); }
+    finally { setDeletingDocuments(false); }
+  }
   const typeFor = (id) => types.find((item) => item.id === id);
   const attachmentFor = (documentId) => attachments.filter((item) => item.document === documentId).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
   const analysisForDocument = (documentId) => analyses
@@ -296,7 +310,17 @@ export default function DocumentsOcrPage() {
     {formOpen && <form className="document-form" onSubmit={upload}><div className="inventory-form-copy document-copy"><p className="eyebrow">Nuovo documento</p><h3>Carica un PDF</h3><span>L'OCR riconosce i dati della fattura dopo il caricamento.</span></div><label>Tipo documento<select required value={form.document_type} onChange={(event) => setForm({ ...form, document_type: event.target.value })}><option value="">Seleziona tipo</option>{types.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Titolo<input required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} /></label><label>Numero documento<input value={form.number} onChange={(event) => setForm({ ...form, number: event.target.value })} /></label><label>Data documento<input required type="date" value={form.document_date} onChange={(event) => setForm({ ...form, document_date: event.target.value })} /></label><label>Fornitore<input value={form.counterparty_name} onChange={(event) => setForm({ ...form, counterparty_name: event.target.value })} /></label><label>File PDF<span className="document-file-control"><input id="document-pdf" required type="file" accept="application/pdf" onChange={(event) => setForm({ ...form, file: event.target.files?.[0] || null })} /><button type="button" onClick={() => document.getElementById("document-pdf")?.click()}>Scegli file</button><span>{form.file?.name || "Nessun file selezionato"}</span></span></label><div className="inline-form-actions"><button type="button" className="secondary-action" onClick={() => setFormOpen(false)}>Annulla</button><button className="primary-action" disabled={saving}>{saving ? "Caricamento..." : "Carica"}</button></div></form>}
     {message && <p className={success ? "operation-success" : "catalog-error"}>{message}</p>}
     <div className="voucher-filters"><div className="products-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cerca documento, numero o fornitore" /></div></div>
-    <article className="products-list"><div className="document-heading"><span>Documento</span><span>Tipo</span><span>Data</span><span>PDF e OCR</span><span>Stato</span><span>Azioni</span></div>{documentsLoading ? <div className="documents-loading" role="status"><LoaderCircle size={28} /><strong>Caricamento documenti in corso…</strong><span>Recupero fatture, allegati e stato OCR.</span></div> : !visible.length ? <div className="empty-product-state"><FileText size={28} /><strong>Nessun documento trovato</strong><span>Carica un PDF per costruire l'archivio documentale.</span></div> : <PaginatedRows items={visible} resetKey={query}>{(rows) => rows.map((document) => { const analysis = analysisForDocument(document.id); const attachment = attachments.find((item) => item.id === analysis?.attachment) || attachmentFor(document.id); const workflow = ocrWorkflowStatus(analysis, attachment); return <div className="document-row" key={document.id}><div><strong>{document.title}</strong><span>{document.number || "Numero non indicato"}{document.counterparty_name ? ` · ${document.counterparty_name}` : ""}</span></div><span>{typeFor(document.document_type)?.name || directionLabel[document.direction]}</span><span>{date(document.document_date)}</span><span>{ocrProcessingLabel(analysis, attachment)}</span><em className={`document-status ${workflow.key}`}>{workflow.label}</em><div className="document-actions">{analysis?.status === "SUCCEEDED" && <button title="Apri proposta OCR" onClick={() => openProposal(analysis)}><Eye size={16} /></button>}{attachment && <button title="Analizza fattura con OCR" onClick={() => analyze(attachment)}><ScanText size={16} /></button>}{attachment?.file && <a href={attachment.file} target="_blank" rel="noreferrer" title="Apri PDF"><FileUp size={16} /></a>}</div></div>; })}</PaginatedRows>}</article>
+    {selectedDocuments.length > 0 && <div className="table-selection-actions"><span>{selectedDocuments.length} {selectedDocuments.length === 1 ? "documento selezionato" : "documenti selezionati"}</span><button type="button" onClick={() => setSelectedDocuments([])}>Deseleziona</button><button type="button" className="delete-selected" disabled={deletingDocuments} onClick={deleteSelectedDocuments}><Trash2 size={16} /> {deletingDocuments ? "Cancellazione..." : "Cancella selezionati"}</button></div>}
+    <article className="products-list">
+      <div className="document-heading"><span className="document-check"><input type="checkbox" aria-label="Seleziona tutti i documenti" checked={visible.length > 0 && selectedDocuments.length === visible.length} onChange={toggleAllDocuments} /></span><span>Documento</span><span>Tipo</span><span>Data</span><span>PDF e OCR</span><span>Stato</span><span>Azioni</span></div>
+      {documentsLoading ? <div className="documents-loading" role="status"><LoaderCircle size={28} /><strong>Caricamento documenti in corso…</strong><span>Recupero fatture, allegati e stato OCR.</span></div> : !visible.length ? <div className="empty-product-state"><FileText size={28} /><strong>Nessun documento trovato</strong><span>Carica un PDF per costruire l'archivio documentale.</span></div> : <PaginatedRows items={visible} resetKey={query}>{(rows) => rows.map((document) => {
+        const analysis = analysisForDocument(document.id); const attachment = attachments.find((item) => item.id === analysis?.attachment) || attachmentFor(document.id); const workflow = ocrWorkflowStatus(analysis, attachment);
+        return <div className={`document-row${selectedDocuments.includes(document.id) ? " selected" : ""}`} key={document.id}>
+          <span className="document-check"><input type="checkbox" aria-label={`Seleziona ${document.title}`} checked={selectedDocuments.includes(document.id)} onChange={() => toggleSelectedDocument(document.id)} /></span>
+          <div><strong>{document.title}</strong><span>{document.number || "Numero non indicato"}{document.counterparty_name ? ` · ${document.counterparty_name}` : ""}</span></div><span>{typeFor(document.document_type)?.name || directionLabel[document.direction]}</span><span>{date(document.document_date)}</span><span>{ocrProcessingLabel(analysis, attachment)}</span><em className={`document-status ${workflow.key}`}>{workflow.label}</em><div className="document-actions">{analysis?.status === "SUCCEEDED" && <button title="Apri proposta OCR" onClick={() => openProposal(analysis)}><Eye size={16} /></button>}{attachment && <button title="Analizza fattura con OCR" onClick={() => analyze(attachment)}><ScanText size={16} /></button>}{attachment?.file && <a href={attachment.file} target="_blank" rel="noreferrer" title="Apri PDF"><FileUp size={16} /></a>}</div>
+        </div>;
+      })}</PaginatedRows>}
+    </article>
     {reviewAnalysis && review && <div className="ocr-review-layer" role="dialog" aria-modal="true">
       <button className="ocr-review-backdrop" aria-label="Chiudi" onClick={closeReview} />
       <section className="ocr-review-modal">

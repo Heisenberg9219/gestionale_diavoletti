@@ -273,6 +273,24 @@ def document_viewset(base):
     def finalize(self,request,pk=None): return Response(self.get_serializer(finalize_document(document=self.get_object(),finalized_by=request.user,number=request.data.get("number"))).data)
     @action(detail=True,methods=("post",))
     def cancel(self,request,pk=None): return Response(self.get_serializer(cancel_document(document=self.get_object(),cancelled_by=request.user,reason=required(request.data,"reason"))).data)
+    @action(detail=False, methods=("post",), url_path="cancel-selected")
+    def cancel_selected(self, request):
+        document_ids = request.data.get("document_ids", [])
+        if not isinstance(document_ids, list) or not document_ids:
+            raise ValidationError({"document_ids": "Seleziona almeno un documento da cancellare."})
+        documents = list(self.get_queryset().filter(pk__in=document_ids))
+        if len(documents) != len(set(document_ids)):
+            raise ValidationError("Uno o più documenti selezionati non sono disponibili.")
+        not_deletable = [document for document in documents if document.status != "DRAFT"]
+        if not_deletable:
+            raise ValidationError("Puoi cancellare solo documenti scansionati o in bozza. Le fatture già registrate o caricate in magazzino restano nello storico.")
+        for document in documents:
+            cancel_document(
+                document=document,
+                cancelled_by=request.user,
+                reason="Cancellato dalla lista Documenti e OCR",
+            )
+        return Response({"cancelled": len(documents)})
     @action(detail=True, methods=("post",), url_path="upload-attachment", parser_classes=(MultiPartParser, FormParser))
     def upload_attachment(self, request, pk=None):
         uploaded_file = request.FILES.get("file")
@@ -345,7 +363,17 @@ def document_attachment_viewset(base):
 
 
 def document_ocr_analysis_viewset(base):
+    from documents.models import DocumentOcrAnalysis
     from documents.services import apply_ocr_purchase_proposal, save_ocr_purchase_proposal
+
+    class OcrAnalysisSerializer(serializers.ModelSerializer):
+        class Meta:
+            model = DocumentOcrAnalysis
+            exclude = ("provider_response",)
+
+    def get_serializer_class():
+        # La risposta grezza di Azure può essere molto grande e non serve alla UI.
+        return OcrAnalysisSerializer
 
     def proposal_from_request(request):
         review = request.data.get("review")
@@ -374,6 +402,7 @@ def document_ocr_analysis_viewset(base):
             "receipt": str(result["receipt"].pk),
         }, status=201)
 
+    base.get_serializer_class = get_serializer_class
     base.save_purchase_proposal = save_purchase_proposal
     base.apply_purchase_proposal = apply_purchase_proposal
     return base
