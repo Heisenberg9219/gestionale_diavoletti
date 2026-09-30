@@ -108,6 +108,7 @@ class SaleViewSet(viewsets.ModelViewSet):
         return response
     def perform_create(self, serializer): serializer.save(opened_by=self.request.user)
     @action(detail=True, methods=("post",), url_path="set-customer")
+    @transaction.atomic
     def set_customer(self, request, pk=None):
         sale = Sale.objects.select_for_update().get(pk=self.get_object().pk)
         if sale.status != Sale.Status.OPEN or sale.payments.exists():
