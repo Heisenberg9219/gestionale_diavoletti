@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Download, PackagePlus, Plus, Search, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Download, PackagePlus, Plus, Search, Trash2, X } from "lucide-react";
 import { downloadFile, request } from "../api";
 import PaginationControls from "../components/PaginationControls";
 import "../products.css";
@@ -24,6 +24,7 @@ export default function CatalogPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [total, setTotal] = useState(0);
+  const [sort, setSort] = useState({ field: "", direction: "asc" });
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(blank);
@@ -36,9 +37,10 @@ export default function CatalogPage() {
   const [bulkSaving, setBulkSaving] = useState(false);
   const [bulkNotice, setBulkNotice] = useState("");
 
-  const load = (requestedPage = page, requestedPageSize = pageSize) => {
+  const load = (requestedPage = page, requestedPageSize = pageSize, requestedSort = sort) => {
     setLoading(true);
-    request(`/catalog/variants/?active=true&search=${encodeURIComponent(query)}&page=${requestedPage}&page_size=${requestedPageSize}`)
+    const sortParams = requestedSort.field ? `&sort=${requestedSort.field}&sort_direction=${requestedSort.direction}` : "";
+    request(`/catalog/variants/?active=true&search=${encodeURIComponent(query)}&page=${requestedPage}&page_size=${requestedPageSize}${sortParams}`)
       .then((data) => {
         const rows = list(data);
         setItems(rows); setTotal(data.count ?? rows.length); setPage(requestedPage);
@@ -66,6 +68,16 @@ export default function CatalogPage() {
   const selectedAll = items.length > 0 && items.every((item) => selected.includes(item.id));
   const changePage = (nextPage) => load(nextPage);
   const changePageSize = (nextPageSize) => load(1, nextPageSize);
+  const toggleSort = (field) => {
+    const nextSort = { field, direction: sort.field === field && sort.direction === "asc" ? "desc" : "asc" };
+    setSort(nextSort);
+    load(1, pageSize, nextSort);
+  };
+  const SortLabel = ({ field, children }) => {
+    const active = sort.field === field;
+    const Icon = active ? (sort.direction === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown;
+    return <button type="button" className={`catalog-sort${active ? " active" : ""}`} onClick={() => toggleSort(field)} aria-label={`Ordina per ${children}`}><span>{children}</span><Icon size={12} /></button>;
+  };
 
   async function ensureSeason(type, year) {
     if (!type) return null;
@@ -199,7 +211,7 @@ export default function CatalogPage() {
     </section>}
     {bulkNotice && <p className="operation-success">{bulkNotice}</p>}
     <article className="products-list catalog-table">
-      <div className="catalog-heading"><span><input aria-label="Seleziona tutte le righe" type="checkbox" checked={selectedAll} onChange={() => setSelected(selectedAll ? [] : items.map((item) => item.id))} /></span><span>Articolo</span><span>Marca</span><span>Categoria</span><span>Collezione</span><span>IVA</span><span>SKU</span><span>Variante</span><span>Barcode</span></div>
+      <div className="catalog-heading"><span><input aria-label="Seleziona tutte le righe" type="checkbox" checked={selectedAll} onChange={() => setSelected(selectedAll ? [] : items.map((item) => item.id))} /></span><span>Articolo</span><span><SortLabel field="brand">Marca</SortLabel></span><span><SortLabel field="category">Categoria</SortLabel></span><span><SortLabel field="season">Collezione</SortLabel></span><span>IVA</span><span><SortLabel field="sku">SKU</SortLabel></span><span>Variante</span><span>Barcode</span></div>
       {loading ? <p>Caricamento catalogo...</p> : items.map((item) => <div className="catalog-row" key={item.id}><span><input aria-label={`Seleziona ${item.product_name}`} type="checkbox" checked={selected.includes(item.id)} onChange={() => toggleSelected(item.id)} /></span><div><button className="catalog-title" onClick={() => openEdit(item)}>{item.product_name}</button><span>{item.product_code}</span></div><span>{item.brand_name || "—"}</span><span>{item.category_name || "—"}</span><span>{item.season_name || "—"}</span><span>{item.tax_rate_name || "—"}</span><b>{item.sku}</b><span>{[item.color_name, item.size_label].filter(Boolean).join(" · ") || "—"}</span><span>{item.barcodes?.join(", ") || "—"}</span></div>)}
     </article>
     {!loading && <PaginationControls page={page} pageSize={pageSize} total={total} onPageChange={changePage} onPageSizeChange={changePageSize} />}

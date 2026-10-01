@@ -77,7 +77,18 @@ class ProductVariantViewSet(CatalogViewSet):
         queryset = super().get_queryset()
         if product := self.request.query_params.get("product"): queryset = queryset.filter(product_id=product)
         if barcode := self.request.query_params.get("barcode"): queryset = queryset.filter(barcodes__code=barcode, barcodes__is_active=True)
-        return queryset.distinct()
+        queryset = queryset.distinct()
+        sort_fields = {
+            "sku": "sku",
+            "brand": "product__brand__name",
+            "category": "product__category__name",
+            "season": "product__season__name",
+        }
+        sort = self.request.query_params.get("sort")
+        if sort in sort_fields:
+            direction = "-" if self.request.query_params.get("sort_direction") == "desc" else ""
+            queryset = queryset.order_by(f"{direction}{sort_fields[sort]}", "pk")
+        return queryset
 
     @action(detail=False, methods=("post",), url_path="reserve-skus")
     def reserve_skus(self, request):

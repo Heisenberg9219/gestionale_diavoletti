@@ -13,6 +13,7 @@ class ReadOnlyModelSerializer(serializers.ModelSerializer):
 class StockBalanceSerializer(ReadOnlyModelSerializer):
     variant_sku = serializers.CharField(source="variant.sku", read_only=True)
     product_name = serializers.CharField(source="variant.product.name", read_only=True)
+    size_label = serializers.CharField(source="variant.size.label", read_only=True)
     location_name = serializers.CharField(source="location.name", read_only=True)
     class Meta:
         model = StockBalance; fields = "__all__"

@@ -22,7 +22,7 @@ class InventoryReadViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class StockBalanceViewSet(InventoryReadViewSet):
-    queryset = StockBalance.objects.select_related("variant", "variant__product", "location")
+    queryset = StockBalance.objects.select_related("variant", "variant__product", "variant__size", "location")
     serializer_class = StockBalanceSerializer
     search_fields = ("variant__sku", "variant__product__name", "location__name")
     ordering_fields = ("quantity_on_hand", "updated_at")
