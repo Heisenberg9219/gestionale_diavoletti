@@ -57,8 +57,8 @@ function FieldErrors({ issues }) {
 
 function proposalLabel(analysis) {
   const status = analysis.proposed_data?.review?.status;
-  const label = ["APPLIED", "IMPORTED"].includes(status) ? "Articoli caricati in magazzino" : status ? "Bozza" : "Scansionato";
-  const timestamp = new Date(analysis.created_at);
+  const label = ["APPLIED", "IMPORTED"].includes(status) ? "Caricamento in magazzino" : status === "DRAFT" ? "Bozza" : "Scansione OCR";
+  const timestamp = new Date(analysis.proposed_data?.review?.applied_at || analysis.proposed_data?.review?.saved_at || analysis.analyzed_at || analysis.updated_at || analysis.created_at);
   const day = timestamp.toLocaleDateString("it-IT");
   const time = timestamp.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
   return `${label} del ${day} alle ${time}`;
@@ -77,10 +77,6 @@ function ocrProcessingLabel(analysis, attachment) {
   if (analysis?.status === "SUCCEEDED") return "OCR completato";
   if (analysis?.status === "FAILED") return "OCR non riuscito";
   return attachment ? "PDF pronto" : "Nessun PDF";
-}
-
-function latest(items, attachment) {
-  return items.filter((item) => item.attachment === attachment && item.status === "SUCCEEDED").sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
 }
 
 function makeReview(analysis, catalog = { taxes: [] }, markup = "") {
@@ -127,9 +123,6 @@ export default function DocumentsOcrPage() {
   const [selectedDocuments, setSelectedDocuments] = useState([]); const [deletingDocuments, setDeletingDocuments] = useState(false);
   const [reviewAnalysis, setReviewAnalysis] = useState(null); const [review, setReview] = useState(null); const [reviewSaving, setReviewSaving] = useState(false); const [skuLoading, setSkuLoading] = useState(false); const [reviewAction, setReviewAction] = useState(""); const [reviewError, setReviewError] = useState(""); const [reviewNotice, setReviewNotice] = useState(""); const [validationIssues, setValidationIssues] = useState([]);
   const reviewReferences = useRef(null);
-  const proposalVersions = analyses
-    .filter((entry) => entry.attachment === reviewAnalysis?.attachment && entry.status === "SUCCEEDED" && entry.proposed_data?.review)
-    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   const imported = ["IMPORTED", "APPLIED"].includes(review?.status);
   const changeReview = (value) => setReview(value);
   const notice = (text, ok = true) => { setSuccess(ok); setMessage(text); };
@@ -183,7 +176,12 @@ export default function DocumentsOcrPage() {
   const attachmentFor = (documentId) => attachments.filter((item) => item.document === documentId).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
   const analysisForDocument = (documentId) => analyses
     .filter((analysis) => attachments.some((attachment) => attachment.id === analysis.attachment && attachment.document === documentId))
-    .sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at))[0];
+    .sort((a, b) => {
+      const priority = (analysis) => ["APPLIED", "IMPORTED"].includes(analysis.proposed_data?.review?.status) ? 3 : analysis.proposed_data?.review?.status === "DRAFT" ? 2 : analysis.status === "SUCCEEDED" ? 1 : 0;
+      const priorityDifference = priority(b) - priority(a);
+      if (priorityDifference) return priorityDifference;
+      return new Date(b.proposed_data?.review?.applied_at || b.proposed_data?.review?.saved_at || b.updated_at || b.created_at) - new Date(a.proposed_data?.review?.applied_at || a.proposed_data?.review?.saved_at || a.updated_at || a.created_at);
+    })[0];
   const closeReview = () => { if (reviewSaving || skuLoading || reviewAction) return; setReviewAnalysis(null); setReview(null); setReviewError(""); setReviewNotice(""); setValidationIssues([]); };
   async function reserveSkus(count, excludeSkus = []) {
     const result = await request("/catalog/variants/reserve-skus/", { method: "POST", body: JSON.stringify({ count, exclude_skus: excludeSkus }) });
@@ -323,7 +321,7 @@ export default function DocumentsOcrPage() {
         const analysis = analysisForDocument(document.id); const attachment = attachments.find((item) => item.id === analysis?.attachment) || attachmentFor(document.id); const workflow = ocrWorkflowStatus(analysis, attachment);
         return <div className={`document-row${selectedDocuments.includes(document.id) ? " selected" : ""}`} key={document.id}>
           <span className="document-check"><input type="checkbox" aria-label={`Seleziona ${document.title}`} checked={selectedDocuments.includes(document.id)} onChange={() => toggleSelectedDocument(document.id)} /></span>
-          <div><strong>{document.title}</strong><span>{document.number || "Numero non indicato"}{document.counterparty_name ? ` · ${document.counterparty_name}` : ""}</span></div><span>{typeFor(document.document_type)?.name || directionLabel[document.direction]}</span><span>{date(document.document_date)}</span><span>{ocrProcessingLabel(analysis, attachment)}</span><em className={`document-status ${workflow.key}`}>{workflow.label}</em><div className="document-actions">{analysis?.status === "SUCCEEDED" && <button title="Apri proposta OCR" onClick={() => openProposal(analysis)}><Eye size={16} /></button>}{attachment && <button title="Analizza fattura con OCR" onClick={() => analyze(attachment)}><ScanText size={16} /></button>}{attachment?.file && <a href={attachment.file} target="_blank" rel="noreferrer" title="Apri PDF"><FileUp size={16} /></a>}</div>
+          <div><strong>{document.title}</strong><span>{document.number || "Numero non indicato"}{document.counterparty_name ? ` · ${document.counterparty_name}` : ""}</span></div><span>{typeFor(document.document_type)?.name || directionLabel[document.direction]}</span><span>{date(document.document_date)}</span><span>{ocrProcessingLabel(analysis, attachment)}</span><em className={`document-status ${workflow.key}`}>{workflow.label}</em><div className="document-actions">{analysis?.status === "SUCCEEDED" && <button title="Apri proposta OCR" onClick={() => openProposal(analysis)}><Eye size={16} /></button>}{attachment && !analyses.some((entry) => entry.attachment === attachment.id && entry.status === "SUCCEEDED") && <button title="Analizza fattura con OCR" onClick={() => analyze(attachment)}><ScanText size={16} /></button>}{attachment?.file && <a href={attachment.file} target="_blank" rel="noreferrer" title="Apri PDF"><FileUp size={16} /></a>}</div>
         </div>;
       })}</PaginatedRows>}
     </article>
@@ -331,10 +329,9 @@ export default function DocumentsOcrPage() {
       <button className="ocr-review-backdrop" aria-label="Chiudi" onClick={closeReview} />
       <section className="ocr-review-modal">
         {reviewAction && <div className="ocr-review-progress" role="status" aria-live="polite"><LoaderCircle size={34} /><strong>{reviewAction}</strong><span>Attendi: i dati vengono elaborati. Non chiudere questa finestra.</span></div>}
-        <header><div><p className="eyebrow">Proposta OCR</p><h3>Controlla e registra la fattura</h3></div><button type="button" title="Chiudi" onClick={closeReview}><X size={20} /></button></header>
+        <header><div><p className="eyebrow">{proposalLabel(reviewAnalysis)}</p><h3>Controlla e registra la fattura</h3></div><button type="button" title="Chiudi" onClick={closeReview}><X size={20} /></button></header>
         {reviewError && <p className="ocr-review-feedback error" role="alert">{reviewError}</p>}
         {reviewNotice && <p className="ocr-review-feedback success">{reviewNotice}</p>}
-        {proposalVersions.length > 1 && <div className="ocr-proposal-history"><label htmlFor="ocr-proposal-version">Versione della proposta</label><select id="ocr-proposal-version" disabled={reviewSaving || skuLoading || reviewAction} value={reviewAnalysis.id} onChange={(event) => { const selected = proposalVersions.find((entry) => entry.id === event.target.value); if (selected) openProposal(selected); }}>{proposalVersions.map((entry, index) => <option key={entry.id} value={entry.id}>{`Versione ${proposalVersions.length - index} · ${proposalLabel(entry)}`}</option>)}</select></div>}
         <fieldset className="ocr-review-fields" disabled={reviewSaving || skuLoading || reviewAction || imported}>
           <div id="ocr-invoice-fields" className="ocr-review-summary">
             <label>Fornitore<input value={review.supplier_name} onChange={(event) => updateReview("supplier_name", event.target.value)} /></label>
