@@ -23,6 +23,7 @@ const money = (value) => amount(value).toFixed(2);
 const lineTotal = (item) => amount(item.quantity) * amount(item.unit_price);
 const needsReservedSku = (value, committed = false) => !value || /^OCR-\d{3}-\d{3}$/i.test(String(value)) || (!committed && /^SKU-\d+$/i.test(String(value)));
 const reviewSkus = (review) => (review?.items || []).flatMap((item) => (item.new_variant?.variants || []).map((variant) => variant.sku).filter(Boolean));
+const normalizeInvoiceValue = (value) => String(value || "").trim().toLocaleUpperCase("it-IT");
 
 function issueFields(issue) {
   const text = String(issue.message || "").toLocaleLowerCase("it-IT");
@@ -174,14 +175,27 @@ export default function DocumentsOcrPage() {
   }
   const typeFor = (id) => types.find((item) => item.id === id);
   const attachmentFor = (documentId) => attachments.filter((item) => item.document === documentId).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
-  const analysisForDocument = (documentId) => analyses
-    .filter((analysis) => attachments.some((attachment) => attachment.id === analysis.attachment && attachment.document === documentId))
-    .sort((a, b) => {
-      const priority = (analysis) => ["APPLIED", "IMPORTED"].includes(analysis.proposed_data?.review?.status) ? 3 : analysis.proposed_data?.review?.status === "DRAFT" ? 2 : analysis.status === "SUCCEEDED" ? 1 : 0;
-      const priorityDifference = priority(b) - priority(a);
-      if (priorityDifference) return priorityDifference;
-      return new Date(b.proposed_data?.review?.applied_at || b.proposed_data?.review?.saved_at || b.updated_at || b.created_at) - new Date(a.proposed_data?.review?.applied_at || a.proposed_data?.review?.saved_at || a.updated_at || a.created_at);
-    })[0];
+  const analysisPriority = (analysis) => ["APPLIED", "IMPORTED"].includes(analysis.proposed_data?.review?.status) ? 3 : analysis.proposed_data?.review?.status === "DRAFT" ? 2 : analysis.status === "SUCCEEDED" ? 1 : 0;
+  const newestAnalysis = (entries) => [...entries].sort((a, b) => {
+    const priorityDifference = analysisPriority(b) - analysisPriority(a);
+    if (priorityDifference) return priorityDifference;
+    return new Date(b.proposed_data?.review?.applied_at || b.proposed_data?.review?.saved_at || b.updated_at || b.created_at) - new Date(a.proposed_data?.review?.applied_at || a.proposed_data?.review?.saved_at || a.updated_at || a.created_at);
+  })[0];
+  const analysisForDocument = (document) => {
+    const direct = analyses.filter((analysis) => attachments.some((attachment) => attachment.id === analysis.attachment && attachment.document === document.id));
+    const directBest = newestAnalysis(direct);
+    const invoiceNumber = normalizeInvoiceValue(document.number || directBest?.proposed_data?.review?.invoice_number || directBest?.proposed_data?.invoice_number);
+    if (!invoiceNumber) return directBest;
+    const recovered = analyses.filter((analysis) => {
+      const review = analysis.proposed_data?.review;
+      if (!review || !["APPLIED", "IMPORTED", "DRAFT"].includes(review.status)) return false;
+      if (normalizeInvoiceValue(review.invoice_number) !== invoiceNumber) return false;
+      const sourceAttachment = attachments.find((attachment) => attachment.id === analysis.attachment);
+      const sourceDocument = documents.find((entry) => entry.id === sourceAttachment?.document);
+      return sourceDocument?.document_date === document.document_date;
+    });
+    return newestAnalysis([...direct, ...recovered]);
+  };
   const closeReview = () => { if (reviewSaving || skuLoading || reviewAction) return; setReviewAnalysis(null); setReview(null); setReviewError(""); setReviewNotice(""); setValidationIssues([]); };
   async function reserveSkus(count, excludeSkus = []) {
     const result = await request("/catalog/variants/reserve-skus/", { method: "POST", body: JSON.stringify({ count, exclude_skus: excludeSkus }) });
@@ -318,7 +332,7 @@ export default function DocumentsOcrPage() {
     <article className="products-list">
       <div className="document-heading"><span className="document-check"><input type="checkbox" aria-label="Seleziona tutti i documenti" checked={visible.length > 0 && selectedDocuments.length === visible.length} onChange={toggleAllDocuments} /></span><span>Documento</span><span>Tipo</span><span>Data</span><span>PDF e OCR</span><span>Stato</span><span>Azioni</span></div>
       {documentsLoading ? <div className="documents-loading" role="status"><LoaderCircle size={28} /><strong>Caricamento documenti in corso…</strong><span>Recupero fatture, allegati e stato OCR.</span></div> : !visible.length ? <div className="empty-product-state"><FileText size={28} /><strong>Nessun documento trovato</strong><span>Carica un PDF per costruire l'archivio documentale.</span></div> : <PaginatedRows items={visible} resetKey={query}>{(rows) => rows.map((document) => {
-        const analysis = analysisForDocument(document.id); const attachment = attachments.find((item) => item.id === analysis?.attachment) || attachmentFor(document.id); const workflow = ocrWorkflowStatus(analysis, attachment);
+        const analysis = analysisForDocument(document); const attachment = attachments.find((item) => item.id === analysis?.attachment) || attachmentFor(document.id); const workflow = ocrWorkflowStatus(analysis, attachment);
         return <div className={`document-row${selectedDocuments.includes(document.id) ? " selected" : ""}`} key={document.id}>
           <span className="document-check"><input type="checkbox" aria-label={`Seleziona ${document.title}`} checked={selectedDocuments.includes(document.id)} onChange={() => toggleSelectedDocument(document.id)} /></span>
           <div><strong>{document.title}</strong><span>{document.number || "Numero non indicato"}{document.counterparty_name ? ` · ${document.counterparty_name}` : ""}</span></div><span>{typeFor(document.document_type)?.name || directionLabel[document.direction]}</span><span>{date(document.document_date)}</span><span>{ocrProcessingLabel(analysis, attachment)}</span><em className={`document-status ${workflow.key}`}>{workflow.label}</em><div className="document-actions">{analysis?.status === "SUCCEEDED" && <button title="Apri proposta OCR" onClick={() => openProposal(analysis)}><Eye size={16} /></button>}{attachment && !analyses.some((entry) => entry.attachment === attachment.id && entry.status === "SUCCEEDED") && <button title="Analizza fattura con OCR" onClick={() => analyze(attachment)}><ScanText size={16} /></button>}{attachment?.file && <a href={attachment.file} target="_blank" rel="noreferrer" title="Apri PDF"><FileUp size={16} /></a>}</div>
