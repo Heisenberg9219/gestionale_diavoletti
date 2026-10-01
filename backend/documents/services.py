@@ -312,6 +312,7 @@ def _proposal_variants(*, item, user):
         suggested_sku = str(row.get("sku") or "").strip()
         sku = suggested_sku
         size_id = row.get("size_id")
+        barcode = str(row.get("barcode") or "").strip()
         quantity = _positive_quantity(row.get("quantity"))
         try:
             sale_price = _money(row.get("sale_price"), "Prezzo vendita", positive=True)
@@ -319,11 +320,26 @@ def _proposal_variants(*, item, user):
             raise ValidationError("Il prezzo di vendita deve essere un numero valido.") from exc
         if not sku or not size_id or sale_price <= 0:
             raise ValidationError("Per ogni taglia indicare SKU, quantità e prezzo di vendita maggiore di zero.")
-        variant = ProductVariant(product=product, sku=sku, color_id=new_variant.get("color_id") or None, size_id=size_id)
-        variant.full_clean()
-        variant.save()
-        barcode = str(row.get("barcode") or "").strip()
+        existing_ids = set()
         if barcode:
+            existing_ids.update(ProductVariant.objects.filter(
+                barcodes__code__iexact=barcode, is_active=True,
+            ).values_list("pk", flat=True))
+        existing_ids.update(ProductVariant.objects.filter(sku__iexact=sku, is_active=True).values_list("pk", flat=True))
+        existing_ids.update(ProductVariant.objects.filter(
+            product=product, size_id=size_id, color_id=new_variant.get("color_id") or None, is_active=True,
+        ).values_list("pk", flat=True))
+        if len(existing_ids) > 1:
+            raise ValidationError("Barcode, SKU e taglia indicano varianti diverse: seleziona il prodotto corretto o correggi i dati.")
+        if existing_ids:
+            variant = ProductVariant.objects.select_for_update().get(pk=existing_ids.pop())
+            if variant.product_id != product.pk:
+                raise ValidationError("Il barcode o lo SKU è già associato a un prodotto diverso da quello selezionato.")
+        else:
+            variant = ProductVariant(product=product, sku=sku, color_id=new_variant.get("color_id") or None, size_id=size_id)
+            variant.full_clean()
+            variant.save()
+        if barcode and not variant.barcodes.filter(code__iexact=barcode).exists():
             ProductBarcode.objects.create(
                 variant=variant, code=barcode,
                 barcode_type={8: ProductBarcode.Type.EAN8, 13: ProductBarcode.Type.EAN13}.get(len(barcode), ProductBarcode.Type.OTHER),
@@ -899,18 +915,16 @@ def validate_ocr_review(review):
         if combination in combinations:
             errors.append(f"{prefix}: taglia e colore ripetuti per lo stesso prodotto.")
         combinations.add(combination)
-        if data.get("product_id"):
-            try:
-                if ProductVariant.objects.filter(product_id=data["product_id"], size_id=data.get("size"), color_id=data.get("color") or None).exists():
-                    errors.append(f"{prefix}: questa taglia e colore esistono già. Associa la variante esistente.")
-            except (ValidationError, ValueError, TypeError):
-                pass
         if data.get("color"):
             reference(Color, data["color"], f"{prefix} colore")
-        if sku.casefold() in skus or ProductVariant.objects.filter(sku__iexact=sku).exists():
-            errors.append(f"{prefix}: SKU già presente. Associa la variante esistente o correggi lo SKU.")
-        if barcode and (barcode.casefold() in barcodes or ProductBarcode.objects.filter(code__iexact=barcode).exists()):
-            errors.append(f"{prefix}: barcode già presente. Associa la variante esistente.")
+        if not data.get("product_id") and sku.casefold() in skus:
+            errors.append(f"{prefix}: SKU {sku} ripetuto in un'altra riga della bozza.")
+        elif not data.get("product_id") and ProductVariant.objects.filter(sku__iexact=sku).exists():
+            errors.append(f"{prefix}: SKU già presente nel catalogo. Associa la variante esistente o correggi lo SKU.")
+        if not data.get("product_id") and barcode and barcode.casefold() in barcodes:
+            errors.append(f"{prefix}: barcode {barcode} ripetuto in un'altra riga della bozza.")
+        elif not data.get("product_id") and barcode and ProductBarcode.objects.filter(code__iexact=barcode).exists():
+            errors.append(f"{prefix}: barcode già presente nel catalogo. Associa la variante esistente.")
         normalized = " ".join(name.casefold().split())
         matches = [other for other in names if normalized == " ".join(other.casefold().split())]
         group = data.get("group", f"row-{index}")
