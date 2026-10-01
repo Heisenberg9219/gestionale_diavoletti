@@ -144,6 +144,7 @@
 
 .ocr-review-modal {
   position: relative;
+  z-index: 2;
   width: min(1120px, 100%);
   max-height: calc(100vh - 48px);
   overflow: auto;
@@ -177,15 +178,15 @@
 .ocr-review-modal footer p { color: #817b80; font-size: 13px; }
 
 .ocr-review-progress {
-  position: absolute;
-  z-index: 5;
+  position: fixed;
+  z-index: 4;
   inset: 0;
   display: grid;
   align-content: center;
   justify-items: center;
   gap: 10px;
   padding: 28px;
-  background: #fffffff2;
+  background: #ffffffeb;
   color: #716a70;
   text-align: center;
 }
@@ -194,15 +195,27 @@
 .ocr-review-progress strong { color: #302b2f; font-size: 16px; }
 .ocr-review-progress span { max-width: 360px; font-size: 13px; }
 
-.ocr-review-feedback {
-  margin: 0 26px 16px;
-  padding: 11px 13px;
-  border-radius: 7px;
-  font-size: 13px;
-  font-weight: 700;
+.ocr-review-toast,
+.documents-toast {
+  position: fixed;
+  z-index: 6;
+  top: 24px;
+  left: 50%;
+  width: min(560px, calc(100vw - 40px));
+  box-sizing: border-box;
+  transform: translateX(-50%);
+  padding: 14px 18px;
+  border-radius: 10px;
+  box-shadow: 0 14px 34px #201b1f2e;
+  font-size: 14px;
+  font-weight: 800;
+  text-align: center;
 }
-.ocr-review-feedback.error { background: #fff0f2; color: #ae0019; }
-.ocr-review-feedback.success { background: #edf9f1; color: #167444; }
+.ocr-review-toast.success,
+.documents-toast.success { background: #edf9f1; color: #167444; }
+.ocr-review-toast.error,
+.documents-toast.error { background: #fff0f2; color: #ae0019; }
+.documents-toast { z-index: 60; }
 
 .ocr-field-error {
   display: block;
