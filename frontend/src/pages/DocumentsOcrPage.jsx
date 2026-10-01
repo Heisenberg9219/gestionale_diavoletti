@@ -24,6 +24,7 @@ const lineTotal = (item) => amount(item.quantity) * amount(item.unit_price);
 const needsReservedSku = (value, committed = false) => !value || /^OCR-\d{3}-\d{3}$/i.test(String(value)) || (!committed && /^SKU-\d+$/i.test(String(value)));
 const reviewSkus = (review) => (review?.items || []).flatMap((item) => (item.new_variant?.variants || []).map((variant) => variant.sku).filter(Boolean));
 const normalizeInvoiceValue = (value) => String(value || "").trim().toLocaleUpperCase("it-IT");
+const isSavedDraft = (status) => ["DRAFT", "SAVED"].includes(status);
 
 function issueFields(issue) {
   const text = String(issue.message || "").toLocaleLowerCase("it-IT");
@@ -58,7 +59,7 @@ function FieldErrors({ issues }) {
 
 function proposalLabel(analysis) {
   const status = analysis.proposed_data?.review?.status;
-  const label = ["APPLIED", "IMPORTED"].includes(status) ? "Caricamento in magazzino" : status === "DRAFT" ? "Bozza" : "Scansione OCR";
+  const label = ["APPLIED", "IMPORTED"].includes(status) ? "Caricamento in magazzino" : isSavedDraft(status) ? "Bozza" : "Scansione OCR";
   const timestamp = new Date(analysis.proposed_data?.review?.applied_at || analysis.proposed_data?.review?.saved_at || analysis.analyzed_at || analysis.updated_at || analysis.created_at);
   const day = timestamp.toLocaleDateString("it-IT");
   const time = timestamp.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
@@ -68,7 +69,7 @@ function proposalLabel(analysis) {
 function ocrWorkflowStatus(analysis, attachment) {
   const proposalStatus = analysis?.proposed_data?.review?.status;
   if (["APPLIED", "IMPORTED"].includes(proposalStatus)) return { key: "stock-loaded", label: "Articoli caricati in magazzino" };
-  if (proposalStatus === "DRAFT") return { key: "draft", label: "Bozza" };
+  if (isSavedDraft(proposalStatus)) return { key: "draft", label: "Bozza" };
   if (analysis?.status === "SUCCEEDED") return { key: "scanned", label: "Scansionato" };
   if (analysis?.status === "FAILED") return { key: "failed", label: "OCR non riuscito" };
   return { key: "pending", label: attachment ? "PDF caricato" : "Nessun PDF" };
@@ -103,9 +104,10 @@ function makeReview(analysis, catalog = { taxes: [] }, markup = "") {
       const item = { ...(proposal.items?.[index] || {}), ...row };
       const previous = item.new_product || {};
       const stored = item.new_variant || {};
+      const isImportedNewVariant = readOnly && !item.variant_id && Object.keys(stored).length > 0;
       return {
         ...item, accepted: item.accepted ?? true,
-        variant_id: item.variant_id ?? ((item.new_product || item.new_variant) ? "__new__" : ""),
+        variant_id: isImportedNewVariant ? "__new__" : item.variant_id ?? ((item.new_product || item.new_variant) ? "__new__" : ""),
         description: item.description ?? "", quantity: item.quantity ?? "", unit_price: item.unit_price ?? "", sale_price: item.sale_price || defaultPrice(item.unit_price),
         new_variant: {
           product_id: previous.product_id || "", product_name: previous.name ?? item.description ?? "",
@@ -175,7 +177,7 @@ export default function DocumentsOcrPage() {
   }
   const typeFor = (id) => types.find((item) => item.id === id);
   const attachmentFor = (documentId) => attachments.filter((item) => item.document === documentId).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
-  const analysisPriority = (analysis) => ["APPLIED", "IMPORTED"].includes(analysis.proposed_data?.review?.status) ? 3 : analysis.proposed_data?.review?.status === "DRAFT" ? 2 : analysis.status === "SUCCEEDED" ? 1 : 0;
+  const analysisPriority = (analysis) => ["APPLIED", "IMPORTED"].includes(analysis.proposed_data?.review?.status) ? 3 : isSavedDraft(analysis.proposed_data?.review?.status) ? 2 : analysis.status === "SUCCEEDED" ? 1 : 0;
   const newestAnalysis = (entries) => [...entries].sort((a, b) => {
     const priorityDifference = analysisPriority(b) - analysisPriority(a);
     if (priorityDifference) return priorityDifference;
@@ -188,7 +190,7 @@ export default function DocumentsOcrPage() {
     if (!invoiceNumber) return directBest;
     const recovered = analyses.filter((analysis) => {
       const review = analysis.proposed_data?.review;
-      if (!review || !["APPLIED", "IMPORTED", "DRAFT"].includes(review.status)) return false;
+      if (!review || (!["APPLIED", "IMPORTED"].includes(review.status) && !isSavedDraft(review.status))) return false;
       if (normalizeInvoiceValue(review.invoice_number) !== invoiceNumber) return false;
       const sourceAttachment = attachments.find((attachment) => attachment.id === analysis.attachment);
       const sourceDocument = documents.find((entry) => entry.id === sourceAttachment?.document);
@@ -343,7 +345,7 @@ export default function DocumentsOcrPage() {
       <button className="ocr-review-backdrop" aria-label="Chiudi" onClick={closeReview} />
       <section className="ocr-review-modal">
         {reviewAction && <div className="ocr-review-progress" role="status" aria-live="polite"><LoaderCircle size={34} /><strong>{reviewAction}</strong><span>Attendi: i dati vengono elaborati. Non chiudere questa finestra.</span></div>}
-        <header><div><p className="eyebrow">{proposalLabel(reviewAnalysis)}</p><h3>Controlla e registra la fattura</h3></div><button type="button" title="Chiudi" onClick={closeReview}><X size={20} /></button></header>
+        <header><div><p className="eyebrow">{proposalLabel(reviewAnalysis)}</p><h3>{imported ? "Dettaglio fattura caricata in magazzino" : "Controlla e registra la fattura"}</h3></div><button type="button" title="Chiudi" onClick={closeReview}><X size={20} /></button></header>
         {reviewError && <p className="ocr-review-feedback error" role="alert">{reviewError}</p>}
         {reviewNotice && <p className="ocr-review-feedback success">{reviewNotice}</p>}
         <fieldset className="ocr-review-fields" disabled={reviewSaving || skuLoading || reviewAction || imported}>
