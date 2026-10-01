@@ -323,7 +323,7 @@ def document_viewset(base):
         )
         from .factories import serializer_for
         return Response(serializer_for(DocumentAttachment)(attachment).data, status=201)
-    base.finalize=finalize; base.cancel=cancel; base.upload_attachment=upload_attachment
+    base.finalize=finalize; base.cancel=cancel; base.cancel_selected=cancel_selected; base.upload_attachment=upload_attachment
     return base
 
 
