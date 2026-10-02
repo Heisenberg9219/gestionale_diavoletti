@@ -49,6 +49,12 @@ export default function NewSalePage({ onNavigate }) {
   const [giftItems, setGiftItems] = useState([]);
   const [giftLoading, setGiftLoading] = useState(false);
   const [voucherCode, setVoucherCode] = useState("");
+  const [voucherOptions, setVoucherOptions] = useState([]);
+  const [voucherDropdown, setVoucherDropdown] = useState(false);
+  const [voucherLoading, setVoucherLoading] = useState(false);
+  const [voucherSearchError, setVoucherSearchError] = useState("");
+  const [voucherMore, setVoucherMore] = useState(false);
+  const voucherRequest = useRef(0);
   const [voucherMessage, setVoucherMessage] = useState("");
   const [reservedPrompt, setReservedPrompt] = useState(null);
   const [reservedChoice, setReservedChoice] = useState("");
@@ -206,17 +212,37 @@ export default function NewSalePage({ onNavigate }) {
   }
 
   const paymentTotal = (currentSale) => Number(currentSale?.final_total_amount || 0) - (currentSale?.payments || []).reduce((total, payment) => total + Number(payment.amount || 0), 0);
+  useEffect(() => {
+    if (!paymentOpen || !voucherDropdown) return;
+    const requestId = ++voucherRequest.current;
+    setVoucherLoading(true); setVoucherOptions([]); setVoucherSearchError(""); setVoucherMore(false);
+    const timer = setTimeout(async () => {
+      try {
+        const result = await request(`/vouchers/vouchers/?search=${encodeURIComponent(voucherCode.trim())}&status=ACTIVE`);
+        if (requestId !== voucherRequest.current) return;
+        setVoucherOptions(list(result).filter((item) => item.status === "ACTIVE" && Number(item.current_balance) > 0 && new Date(item.expires_at).getTime() > Date.now()));
+        setVoucherMore(Boolean(result.next));
+      } catch (error) {
+        if (requestId === voucherRequest.current) setVoucherSearchError(error.message);
+      } finally {
+        if (requestId === voucherRequest.current) setVoucherLoading(false);
+      }
+    }, 250);
+    return () => { clearTimeout(timer); voucherRequest.current += 1; };
+  }, [paymentOpen, voucherDropdown, voucherCode]);
   async function openPayment() {
     try {
       const currentSale = await request(`/sales/sales/${sale.id}/`);
       const remaining = Math.max(0, paymentTotal(currentSale));
       setRoundedTotal(Number(currentSale.final_total_amount).toFixed(2));
       setVoucherMessage("");
+      setVoucherDropdown(false);
       setSplitPayment(false);
       setSale(currentSale); setPaymentMethod("CASH"); setPaymentAmount(remaining.toFixed(2)); setCashReceived(remaining.toFixed(2)); setPaymentReference(""); setPaymentError(""); setPaymentOpen(true);
     } catch (error) { setMessage(`Impossibile preparare il pagamento: ${error.message}`); }
   }
   async function applyVoucher() {
+    setVoucherDropdown(false);
     const code = voucherCode.trim().toUpperCase();
     if (!code) return setVoucherMessage("Inserisci il codice del buono.");
     setPaying(true);
@@ -449,8 +475,17 @@ export default function NewSalePage({ onNavigate }) {
 {Number(sale?.manual_total_adjustment || 0) !== 0 && <p className="payment-change">Arrotondamento applicato: {Number(sale.manual_total_adjustment) > 0 ? "+" : ""}{euro.format(Number(sale.manual_total_adjustment))}</p>}
 {Boolean(sale?.payments?.length) && <div className="checkout-payments"><h4>Pagamenti registrati</h4>{sale.payments.map((item) => <div key={item.id}><span>{paymentLabels[item.method] || item.method}{item.method === "CASH" && Number(item.cash_change_amount) > 0 && <small>Resto consegnato: {euro.format(Number(item.cash_change_amount))}</small>}</span><strong>{euro.format(Number(item.amount))}</strong><button type="button" className="secondary-action" disabled={paying} onClick={() => removePayment(item)}>Rimuovi</button></div>)}</div>}
 <details className="checkout-options"><summary>Arrotondamento e buoni</summary>
-<div className="voucher-apply"><label>Totale arrotondato €<input inputMode="decimal" value={roundedTotal} disabled={paying || Boolean(sale?.payments?.length)} onChange={(event) => setRoundedTotal(event.target.value)} /><small>Disponibile prima di registrare pagamenti.</small></label><button type="button" className="secondary-action" disabled={paying || Boolean(sale?.payments?.length)} onClick={applyRounding}>Arrotonda</button></div>
-<div className="voucher-apply"><label>Codice buono<input value={voucherCode} disabled={paying} onChange={(event) => setVoucherCode(event.target.value)} placeholder="Codice buono" /></label><button type="button" className="secondary-action" disabled={paying} onClick={applyVoucher}>Usa buono</button></div></details>
+<div className="voucher-apply rounding-row"><label>Totale arrotondato €<input inputMode="decimal" value={roundedTotal} disabled={paying || Boolean(sale?.payments?.length)} onChange={(event) => setRoundedTotal(event.target.value)} /></label><button type="button" className="secondary-action" disabled={paying || Boolean(sale?.payments?.length)} onClick={applyRounding}>Arrotonda</button><small>Disponibile prima di registrare pagamenti.</small></div>
+<div className="voucher-apply"><div className="voucher-picker" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setVoucherDropdown(false); }}>
+<label>Codice buono<input value={voucherCode} disabled={paying} role="combobox" aria-expanded={voucherDropdown} aria-controls="voucher-options" aria-autocomplete="list" autoComplete="off" onFocus={() => setVoucherDropdown(true)} onKeyDown={(event) => { if (event.key === "Escape") setVoucherDropdown(false); if (event.key === "ArrowDown") { event.preventDefault(); setVoucherDropdown(true); document.getElementById("voucher-options")?.querySelector("button")?.focus(); } }} onChange={(event) => { voucherRequest.current += 1; setVoucherOptions([]); setVoucherLoading(true); setVoucherDropdown(true); setVoucherCode(event.target.value); }} placeholder="Cerca o seleziona un buono" /></label>
+{voucherDropdown && <div className="voucher-options" id="voucher-options" role="listbox" aria-label="Buoni utilizzabili">
+{voucherLoading && <p role="status">Caricamento buoni…</p>}
+{voucherSearchError && <p role="alert">{voucherSearchError}</p>}
+{!voucherLoading && !voucherSearchError && !voucherOptions.length && <p>Nessun buono utilizzabile trovato.</p>}
+{voucherOptions.map((voucher) => <button key={voucher.id} type="button" role="option" aria-selected={voucherCode === voucher.code} disabled={paying} onClick={() => { setVoucherCode(voucher.code); setVoucherDropdown(false); }} onKeyDown={(event) => { if (event.key === "Escape") setVoucherDropdown(false); if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); (event.key === "ArrowDown" ? event.currentTarget.nextElementSibling : event.currentTarget.previousElementSibling)?.focus?.(); } }}><strong>{voucher.code}</strong><span>Saldo: {euro.format(Number(voucher.current_balance))}</span></button>)}
+{voucherMore && <p>Continua a scrivere per restringere i risultati.</p>}
+</div>}
+</div><button type="button" className="secondary-action" disabled={paying} onClick={applyVoucher}>Usa buono</button></div></details>
 {Math.round(paymentTotal(sale) * 100) > 0 ? <section className="checkout-entry"><h4>Pagamento</h4>
 {!splitPayment && <div className="checkout-methods" role="group" aria-label="Metodo di pagamento">{["CASH", "CARD"].map((method) => <button key={method} type="button" aria-pressed={paymentMethod === method} disabled={paying} onClick={() => { setPaymentMethod(method); setPaymentError(""); }}>{method === "CASH" ? <Banknote size={24} aria-hidden="true" /> : method === "CARD" ? <CreditCard size={24} aria-hidden="true" /> : <CreditCard size={24} aria-hidden="true" />}{paymentLabels[method]}</button>)}</div>}
 <label className="checkout-split"><input type="checkbox" checked={splitPayment} disabled={paying} onChange={(event) => { setSplitPayment(event.target.checked); const remaining = Math.max(0, paymentTotal(sale)).toFixed(2); setPaymentAmount(remaining); setCashReceived(remaining); setSplitCash(remaining); setSplitCard("0.00"); setPaymentError(""); }} />Dividi tra più metodi di pagamento</label>
