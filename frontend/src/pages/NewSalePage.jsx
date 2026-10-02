@@ -5,6 +5,8 @@ import "../new-sale.css";
 
 const euro = new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" });
 const list = (payload) => payload.results || payload || [];
+const decimal = (value) => Number(String(value).replace(",", "."));
+const paymentLabels = { CASH: "Contanti", CARD: "Carta", OTHER: "Altro", GIFT_CARD: "Gift card", STORE_CREDIT: "Buono reso" };
 
 export default function NewSalePage({ onNavigate }) {
   const [session, setSession] = useState(null);
@@ -177,6 +179,7 @@ export default function NewSalePage({ onNavigate }) {
       const currentSale = await request(`/sales/sales/${sale.id}/`);
       const remaining = Math.max(0, paymentTotal(currentSale));
       setRoundedTotal(Number(currentSale.final_total_amount).toFixed(2));
+      setVoucherMessage("");
       setSale(currentSale); setPaymentMethod("CASH"); setPaymentAmount(remaining.toFixed(2)); setCashReceived(remaining.toFixed(2)); setPaymentReference(""); setPaymentError(""); setPaymentOpen(true);
     } catch (error) { setMessage(`Impossibile preparare il pagamento: ${error.message}`); }
   }
@@ -212,16 +215,27 @@ export default function NewSalePage({ onNavigate }) {
     finally { setPaying(false); }
   }
   async function completePayment() {
-    const amount = Number(String(paymentAmount).replace(",", "."));
-    const received = Number(String(cashReceived).replace(",", "."));
-    if (!Number.isFinite(amount) || amount < 0) return setPaymentError("Inserisci un importo di pagamento valido.");
-    if (amount === 0 && paymentTotal(sale) > 0) return setPaymentError("Inserisci un importo di pagamento valido.");
-    if (paymentMethod === "CASH" && (!Number.isFinite(received) || received < amount)) return setPaymentError("Per i contanti indica un importo ricevuto almeno pari al totale.");
+    if (Math.round(paymentTotal(sale) * 100) > 0) return setPaymentError("Registra i pagamenti prima di concludere la vendita.");
     setPaying(true); setPaymentError("");
     try {
-      if (amount > 0) await request(`/sales/sales/${sale.id}/add-payment/`, { method: "POST", body: JSON.stringify({ method: paymentMethod, amount: amount.toFixed(2), cash_received_amount: paymentMethod === "CASH" ? received.toFixed(2) : undefined, transaction_reference: paymentReference }) });
       const confirmed = await request(`/sales/sales/${sale.id}/confirm/`, { method: "POST", body: JSON.stringify({}) });
       setPaymentOpen(false); setSale(null); setLabels({}); setMessage(`Vendita ${confirmed.number} registrata correttamente.`); inputRef.current?.focus();
+    } catch (error) { setPaymentError(`Vendita non conclusa: ${error.message}`); }
+    finally { setPaying(false); }
+  }
+  async function registerPayment() {
+    const amount = Number(String(paymentAmount).replace(",", "."));
+    const received = Number(String(cashReceived).replace(",", "."));
+    if (!/^\d+(?:[.,]\d{1,2})?$/.test(paymentAmount.trim()) || !Number.isFinite(amount) || amount <= 0) return setPaymentError("Inserisci un importo positivo, con al massimo due decimali.");
+    if (Math.round(amount * 100) > Math.round(paymentTotal(sale) * 100)) return setPaymentError("L'importo supera il residuo da pagare.");
+    if (paymentMethod === "CASH" && (!/^\d+(?:[.,]\d{1,2})?$/.test(cashReceived.trim()) || !Number.isFinite(received) || received < amount)) return setPaymentError("Indica i contanti ricevuti, almeno pari all'importo da registrare e con al massimo due decimali.");
+    setPaying(true); setPaymentError("");
+    try {
+      const payment = await request(`/sales/sales/${sale.id}/add-payment/`, { method: "POST", body: JSON.stringify({ method: paymentMethod, amount: amount.toFixed(2), cash_received_amount: paymentMethod === "CASH" ? received.toFixed(2) : undefined, transaction_reference: paymentReference }) });
+      const updated = { ...sale, payments: [...(sale.payments || []), payment] };
+      setSale(updated);
+      const remaining = Math.max(0, paymentTotal(updated)).toFixed(2);
+      setPaymentAmount(remaining); setCashReceived(remaining); setPaymentReference("");
     } catch (error) { setPaymentError(`Pagamento non completato: ${error.message}`); }
     finally { setPaying(false); }
   }
@@ -319,7 +333,7 @@ export default function NewSalePage({ onNavigate }) {
     {giftListOpen && <div className="payment-layer" role="dialog" aria-modal="true" aria-label="Carica lista regalo"><button className="payment-backdrop" aria-label="Chiudi" onClick={() => setGiftListOpen(false)} /><section className="payment-dialog sale-selection-dialog"><header><div><p className="eyebrow">Lista regalo</p><h3>{selectedGiftList ? selectedGiftList.title : "Scegli una lista"}</h3></div><button type="button" aria-label="Chiudi" onClick={() => setGiftListOpen(false)}><X size={20} /></button></header>{giftLoading ? <p className="selection-empty">Caricamento in corso…</p> : !selectedGiftList ? giftLists.map((giftList) => <button type="button" className="selection-row" key={giftList.id} onClick={() => selectGiftList(giftList)}><strong>{giftList.title}</strong><span>{giftList.code} · {giftList.beneficiary_first_name} {giftList.beneficiary_last_name}</span></button>) : giftItems.map((item) => { const remaining = Number(item.reserved_quantity || 0) - Number(item.purchased_quantity || 0); return <div className="gift-item-row" key={item.id}><div><strong>{item.variant_data?.product_name || item.variant}</strong><span>{item.variant_data?.sku || ""} · Disponibili dalla lista: {remaining}</span></div><button type="button" className="secondary-action" disabled={remaining < 1} onClick={() => addGiftItem(item)}>Aggiungi</button></div>; })}{!giftLoading && !selectedGiftList && !giftLists.length && <p className="selection-empty">Nessuna lista articoli aperta.</p>}</section></div>}
     {paymentOpen && <div className="payment-layer" role="dialog" aria-modal="true" aria-label="Pagamento vendita">
 <button className="payment-backdrop" aria-label="Chiudi" disabled={paying} onClick={() => setPaymentOpen(false)} />
-<section className="payment-dialog">
+<section className="payment-dialog checkout-dialog">
 <header>
 <div>
 <p className="eyebrow">Pagamento</p>
@@ -329,26 +343,35 @@ export default function NewSalePage({ onNavigate }) {
 <X size={20} />
 </button>
 </header>
-<div className="payment-total">
-<span>Totale da pagare</span>
-<strong>{euro.format(Number(paymentAmount || 0))}</strong>
+<div className="checkout-summary">
+<div><span>Totale vendita</span><strong>{euro.format(Number(sale?.final_total_amount || 0))}</strong></div>
+<div><span>Già pagato</span><strong>{euro.format((sale?.payments || []).reduce((sum, item) => sum + Number(item.amount), 0))}</strong></div>
+<div className="checkout-remaining"><span>Residuo da pagare</span><strong>{euro.format(Math.max(0, paymentTotal(sale)))}</strong></div>
 </div>
-<div className="voucher-apply"><label>Totale arrotondato €<input inputMode="decimal" value={roundedTotal} disabled={paying || Boolean(sale?.payments?.length)} onChange={(event) => setRoundedTotal(event.target.value)} /></label><button type="button" className="secondary-action" disabled={paying || Boolean(sale?.payments?.length)} onClick={applyRounding}>Applica</button></div>
-{Boolean(sale?.payments?.length) && <small>Arrotondamento disponibile prima di applicare buoni o registrare pagamenti.</small>}
+<details className="checkout-options"><summary>Arrotonda il totale della vendita</summary>
+<p>Inserisci il nuovo totale e applicalo prima di registrare pagamenti o buoni.</p>
+<div className="voucher-apply"><label>Nuovo totale €<input inputMode="decimal" value={roundedTotal} disabled={paying || Boolean(sale?.payments?.length)} onChange={(event) => setRoundedTotal(event.target.value)} /></label><button type="button" className="secondary-action" disabled={paying || Boolean(sale?.payments?.length)} onClick={applyRounding}>Applica</button></div>
+</details>
 {Number(sale?.manual_total_adjustment || 0) !== 0 && <p className="payment-change">Arrotondamento applicato: {Number(sale.manual_total_adjustment) > 0 ? "+" : ""}{euro.format(Number(sale.manual_total_adjustment))}</p>}
-<label>Metodo di pagamento<select value={paymentMethod} disabled={paying} onChange={(event) => setPaymentMethod(event.target.value)}>
+{Boolean(sale?.payments?.length) && <div className="checkout-payments"><h4>Pagamenti registrati</h4>{sale.payments.map((item) => <div key={item.id}><span>{paymentLabels[item.method] || item.method}{item.method === "CASH" && Number(item.cash_change_amount) > 0 && <small>Resto consegnato: {euro.format(Number(item.cash_change_amount))}</small>}</span><strong>{euro.format(Number(item.amount))}</strong></div>)}</div>}
+{Math.round(paymentTotal(sale) * 100) > 0 ? <section className="checkout-entry"><h4>Registra un pagamento</h4><p>Per dividere il pagamento, registra una parte e poi scegli il metodo per il residuo.</p>
+<label>Metodo di pagamento<select value={paymentMethod} disabled={paying} onChange={(event) => { setPaymentMethod(event.target.value); setPaymentError(""); }}>
 <option value="CASH">Contanti</option>
 <option value="CARD">Carta</option>
 <option value="OTHER">Altro</option>
 </select>
 </label>
-<label>Importo<input inputMode="decimal" value={paymentAmount} disabled={paying} onChange={(event) => { setPaymentAmount(event.target.value); if (paymentMethod === "CASH") setCashReceived(event.target.value); }} />
+<label>Importo da registrare €<input inputMode="decimal" value={paymentAmount} disabled={paying} onChange={(event) => { setPaymentAmount(event.target.value); if (paymentMethod === "CASH") setCashReceived(event.target.value); }} />
 </label>{paymentMethod === "CASH" && <label>Contanti ricevuti<input inputMode="decimal" value={cashReceived} disabled={paying} onChange={(event) => setCashReceived(event.target.value)} />
 </label>}{paymentMethod !== "CASH" && <label>Riferimento pagamento <small>Facoltativo</small>
 <input value={paymentReference} disabled={paying} onChange={(event) => setPaymentReference(event.target.value)} placeholder="Es. numero transazione" />
-</label>}{paymentMethod === "CASH" && Number(cashReceived || 0) >= Number(paymentAmount || 0) && <p className="payment-change">Resto: {euro.format(Math.max(0, Number(cashReceived || 0) - Number(paymentAmount || 0)))}</p>}<div className="voucher-apply"><label>Applica buono<input value={voucherCode} disabled={paying} onChange={(event) => setVoucherCode(event.target.value)} placeholder="Codice buono" /></label><button type="button" className="secondary-action" disabled={paying} onClick={applyVoucher}>Applica</button></div>{voucherMessage && <p className="voucher-message">{voucherMessage}</p>}{paymentError && <p className="payment-error" role="alert">{paymentError}</p>}<footer>
-<button type="button" className="secondary-action" disabled={paying} onClick={() => setPaymentOpen(false)}>Annulla</button>
-<button type="button" className="primary-action" disabled={paying} onClick={completePayment}>{paying ? "Registrazione..." : "Conferma pagamento"}</button>
+</label>}{paymentMethod === "CASH" && Number.isFinite(decimal(cashReceived)) && decimal(cashReceived) >= decimal(paymentAmount) && <p className="payment-change">Resto da consegnare: {euro.format(Math.max(0, decimal(cashReceived) - decimal(paymentAmount)))}</p>}
+<button type="button" className="primary-action" disabled={paying} onClick={registerPayment}>{paying ? "Registrazione..." : `Registra ${paymentLabels[paymentMethod].toLowerCase()}`}</button>
+<details className="checkout-options"><summary>Usa un buono</summary><div className="voucher-apply"><label>Codice buono<input value={voucherCode} disabled={paying} onChange={(event) => setVoucherCode(event.target.value)} placeholder="Codice buono" /></label><button type="button" className="secondary-action" disabled={paying} onClick={applyVoucher}>Applica</button></div></details>
+</section> : <p className="payment-change">Il totale è coperto. Puoi concludere la vendita.</p>}
+{voucherMessage && <p className="voucher-message" role="status">{voucherMessage}</p>}{paymentError && <p className="payment-error" role="alert">{paymentError}</p>}<footer>
+<button type="button" className="secondary-action" disabled={paying} onClick={() => setPaymentOpen(false)}>Torna alla vendita</button>
+<button type="button" className="primary-action" disabled={paying || Math.round(paymentTotal(sale) * 100) > 0} onClick={completePayment}>{paying ? "Attendi..." : "Concludi vendita"}</button>
 </footer>
 </section>
 </div>}

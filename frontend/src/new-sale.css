@@ -72,3 +72,18 @@
 .reserved-dialog footer{margin:0;padding-top:18px;border-top:1px solid #eee9eb;gap:10px}
 .reserved-dialog footer button{min-height:42px;height:auto;padding:11px 15px;font-size:13px;line-height:1.4}
 @media(max-width:480px){.payment-dialog.reserved-dialog{padding:20px;gap:16px}.reserved-dialog footer{flex-direction:column-reverse}.reserved-dialog footer button{width:100%}.reserved-count{font-size:11px}.reserved-dialog .reserved-list-card{padding:12px;gap:9px}}
+.checkout-dialog{width:min(520px,100%);box-sizing:border-box;max-height:calc(100dvh - 40px);overflow-y:auto}
+.checkout-summary{display:grid;gap:10px;padding:16px;border-radius:10px;background:#f7f5f4}
+.checkout-summary>div,.checkout-payments>div{display:flex;align-items:center;justify-content:space-between;gap:16px;font-size:14px}
+.checkout-summary .checkout-remaining{padding-top:12px;border-top:1px solid #ded9db;font-weight:800}
+.checkout-remaining strong{font-size:24px;color:#d9001b}
+.checkout-options{border:1px solid #e2dddf;border-radius:9px;padding:12px}
+.checkout-options summary{cursor:pointer;font-size:13px;font-weight:800;color:#514a50}
+.checkout-options p,.checkout-entry>p{margin:0;color:#736b71;font-size:13px;line-height:1.5}
+.checkout-options[open] summary{margin-bottom:12px}
+.checkout-entry{display:grid;gap:12px;border-top:1px solid #eee9eb;padding-top:16px}
+.checkout-entry h4,.checkout-payments h4{margin:0;font-size:15px}
+.checkout-payments{display:grid;gap:10px}
+.checkout-payments small{display:block;margin-top:4px;color:#736b71;font-size:12px}
+.checkout-dialog footer{border-top:1px solid #eee9eb;padding-top:15px;flex-wrap:wrap}
+.checkout-dialog button:disabled{opacity:.5;cursor:not-allowed}
