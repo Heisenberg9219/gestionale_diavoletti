@@ -6,6 +6,10 @@ import "../products.css";
 
 const list = (data) => data?.results || data || [];
 const currentYear = String(new Date().getFullYear());
+const formatMoneyInput = (value) => {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount.toFixed(2) : "";
+};
 const blank = {
   code: "", name: "", description: "", brand: "", category: "", tax_rate: "",
   season_type: "", season_year: currentYear, sku: "", size: "", color: "",
@@ -133,7 +137,7 @@ export default function CatalogPage() {
         code: product.code, name: product.name, description: product.description || "", brand: product.brand || "", category: product.category || "", tax_rate: product.tax_rate || "",
         season_type: season?.season_type || "", season_year: season?.year ? String(season.year) : currentYear,
         sku: item.sku, size: item.size, color: item.color || "", barcode: barcode?.code || "", barcodeId: barcode?.id || "",
-        purchase_price: item.purchase_price || "",
+        purchase_price: formatMoneyInput(item.purchase_price),
         sale_price: price?.amount || "", current_sale_price: price?.amount || "",
       });
       setOpen(true);
