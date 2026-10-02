@@ -107,6 +107,20 @@ class SalesServiceTests(TestCase):
             quantity=quantity,
         )
 
+    def test_cart_cannot_exceed_stock(self):
+        sale = self.create_sale()
+        self.add_standard_line(sale=sale, quantity=10)
+        with self.assertRaisesMessage(ValidationError, "Giacenza insufficiente"):
+            self.add_standard_line(sale=sale, quantity=11)
+        self.assertEqual(sale.lines.get().quantity, 10)
+
+    def test_cart_cannot_add_without_stock(self):
+        StockBalance.objects.filter(variant=self.variant, location=self.location).delete()
+        sale = self.create_sale()
+        with self.assertRaisesMessage(ValidationError, "Giacenza insufficiente"):
+            self.add_standard_line(sale=sale)
+        self.assertFalse(sale.lines.exists())
+
     def test_manual_line_price_is_recorded(self):
         sale = self.create_sale()
         line = set_sale_line(
@@ -252,12 +266,12 @@ class SalesServiceTests(TestCase):
         self.assertEqual(sale.total_cost_amount, Decimal("20.00"))
 
     def test_insufficient_stock_rolls_back_confirmation(self):
+        sale = self.create_sale()
+        self.add_standard_line(sale=sale, quantity=2)
         StockBalance.objects.filter(
             variant=self.variant,
             location=self.location,
         ).update(quantity_on_hand=1)
-        sale = self.create_sale()
-        self.add_standard_line(sale=sale, quantity=2)
         sale.refresh_from_db()
         add_sale_payment(
             sale=sale,

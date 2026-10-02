@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Banknote, Barcode, CreditCard, Ellipsis, Minus, Plus, Search, ShoppingCart, Trash2, X } from "lucide-react";
+import { Banknote, Barcode, CreditCard, Minus, Plus, Search, ShoppingCart, Trash2, X } from "lucide-react";
 import { request } from "../api";
 import "../new-sale.css";
 
@@ -24,6 +24,8 @@ export default function NewSalePage({ onNavigate }) {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState("CASH");
   const [splitPayment, setSplitPayment] = useState(false);
+  const [splitCash, setSplitCash] = useState("0.00");
+  const [splitCard, setSplitCard] = useState("0.00");
   const [paymentAmount, setPaymentAmount] = useState("");
   const [roundedTotal, setRoundedTotal] = useState("");
   const [cashReceived, setCashReceived] = useState("");
@@ -224,6 +226,7 @@ export default function NewSalePage({ onNavigate }) {
       const refreshed = await request(`/sales/sales/${sale.id}/`);
       const newRemaining = Math.max(0, paymentTotal(refreshed));
       setSale(refreshed); setPaymentAmount(newRemaining.toFixed(2)); setCashReceived(newRemaining.toFixed(2)); setVoucherCode(""); setVoucherMessage(`Buono applicato: ${euro.format(Math.min(Number(voucher.current_balance || 0), remaining))}.`);
+      setSplitCash(newRemaining.toFixed(2)); setSplitCard("0.00");
     } catch (error) { setVoucherMessage(`Impossibile applicare il buono: ${error.message}`); }
     finally { setPaying(false); }
   }
@@ -239,6 +242,7 @@ export default function NewSalePage({ onNavigate }) {
       setSale(updated); setRoundedTotal(Number(updated.final_total_amount).toFixed(2));
       const remaining = Math.max(0, paymentTotal(updated)).toFixed(2);
       setPaymentAmount(remaining); setCashReceived(remaining);
+      setSplitCash(remaining); setSplitCard("0.00");
     } catch (error) { setPaymentError(`Impossibile applicare l'arrotondamento: ${error.message}`); }
     finally { setPaying(false); }
   }
@@ -277,10 +281,12 @@ export default function NewSalePage({ onNavigate }) {
     finally { setPaying(false); }
   }
   async function registerPayment(closeSale = false) {
+    if (Math.round(decimal(roundedTotal) * 100) !== Math.round(Number(sale.final_total_amount) * 100)) return setPaymentError("Applica l'arrotondamento prima di incassare oppure ripristina il totale attuale.");
     const amount = Number(String(paymentAmount).replace(",", "."));
     const received = Number(String(cashReceived).replace(",", "."));
     if (!/^\d+(?:[.,]\d{1,2})?$/.test(paymentAmount.trim()) || !Number.isFinite(amount) || amount <= 0) return setPaymentError("Inserisci un importo positivo, con al massimo due decimali.");
     if (Math.round(amount * 100) > Math.round(paymentTotal(sale) * 100)) return setPaymentError("L'importo supera il residuo da pagare.");
+    if (closeSale && Math.round(amount * 100) !== Math.round(paymentTotal(sale) * 100)) return setPaymentError("L'importo deve coprire esattamente il totale residuo.");
     if (paymentMethod === "CASH" && (!/^\d+(?:[.,]\d{1,2})?$/.test(cashReceived.trim()) || !Number.isFinite(received) || received < amount)) return setPaymentError("Indica i contanti ricevuti, almeno pari all'importo da registrare e con al massimo due decimali.");
     setPaying(true); setPaymentError("");
     try {
@@ -295,6 +301,29 @@ export default function NewSalePage({ onNavigate }) {
       }
     } catch (error) { setPaymentError(`Pagamento non completato: ${error.message}`); }
     finally { setPaying(false); }
+  }
+  async function registerSplitPayment() {
+    if (Math.round(decimal(roundedTotal) * 100) !== Math.round(Number(sale.final_total_amount) * 100)) return setPaymentError("Applica l'arrotondamento prima di incassare oppure ripristina il totale attuale.");
+    const valid = (value) => /^\d+(?:[.,]\d{1,2})?$/.test(value.trim());
+    const cash = decimal(splitCash), card = decimal(splitCard), received = decimal(cashReceived);
+    if (!valid(splitCash) || !valid(splitCard)) return setPaymentError("Inserisci importi validi con al massimo due decimali.");
+    if (Math.round(cash * 100) + Math.round(card * 100) !== Math.round(paymentTotal(sale) * 100)) return setPaymentError("Contanti e carta devono coprire esattamente il residuo del totale, incluso l'arrotondamento applicato.");
+    if (cash > 0 && (!valid(cashReceived) || received < cash)) return setPaymentError("I contanti ricevuti devono coprire la quota in contanti.");
+    setPaying(true); setPaymentError("");
+    let updated = sale;
+    try {
+      for (const [method, amount] of [["CASH", cash], ["CARD", card]]) {
+        if (amount <= 0) continue;
+        const payment = await request(`/sales/sales/${sale.id}/add-payment/`, { method: "POST", body: JSON.stringify({ method, amount: amount.toFixed(2), cash_received_amount: method === "CASH" ? received.toFixed(2) : undefined }) });
+        updated = { ...updated, payments: [...(updated.payments || []), payment] }; setSale(updated);
+      }
+      const confirmed = await request(`/sales/sales/${sale.id}/confirm/`, { method: "POST", body: JSON.stringify({}) });
+      setPaymentOpen(false); setSale(null); setLabels({}); setMessage(`Vendita ${confirmed.number} registrata correttamente.`);
+    } catch (error) {
+      const remaining = Math.max(0, paymentTotal(updated)).toFixed(2);
+      setSplitCash("0.00"); setSplitCard(remaining); setPaymentAmount(remaining); setCashReceived(remaining);
+      setPaymentError(`Pagamento non completato: ${error.message}. I pagamenti già registrati sono nel riepilogo.`);
+    } finally { setPaying(false); }
   }
 
   if (!session || !register) return <section className="new-sale-empty">
@@ -368,8 +397,10 @@ export default function NewSalePage({ onNavigate }) {
 <span>Totale</span>
 <strong>{euro.format(Number(sale?.final_total_amount || 0))}</strong>
 </div>
+<div className="receipt-actions">
 <button className="primary-action receipt-pay" disabled={!sale?.lines?.length} onClick={openPayment}>Vai al pagamento</button>
 {sale && <button type="button" className="secondary-action" disabled={paying || adding} onClick={cancelSale}>Annulla vendita</button>}
+</div>
 </aside>
 </div>
     {reservedPrompt && <div className="payment-layer" role="dialog" aria-modal="true" aria-labelledby="reserved-title">
@@ -413,21 +444,22 @@ export default function NewSalePage({ onNavigate }) {
 </div>
 {Number(sale?.manual_total_adjustment || 0) !== 0 && <p className="payment-change">Arrotondamento applicato: {Number(sale.manual_total_adjustment) > 0 ? "+" : ""}{euro.format(Number(sale.manual_total_adjustment))}</p>}
 {Boolean(sale?.payments?.length) && <div className="checkout-payments"><h4>Pagamenti registrati</h4>{sale.payments.map((item) => <div key={item.id}><span>{paymentLabels[item.method] || item.method}{item.method === "CASH" && Number(item.cash_change_amount) > 0 && <small>Resto consegnato: {euro.format(Number(item.cash_change_amount))}</small>}</span><strong>{euro.format(Number(item.amount))}</strong><button type="button" className="secondary-action" disabled={paying} onClick={() => removePayment(item)}>Rimuovi</button></div>)}</div>}
-{Math.round(paymentTotal(sale) * 100) > 0 ? <section className="checkout-entry"><h4>Come paga il cliente?</h4>
-<div className="checkout-methods" role="group" aria-label="Metodo di pagamento">{["CASH", "CARD", "OTHER"].map((method) => <button key={method} type="button" aria-pressed={paymentMethod === method} disabled={paying} onClick={() => { setPaymentMethod(method); setPaymentError(""); }}>{method === "CASH" ? <Banknote size={24} aria-hidden="true" /> : method === "CARD" ? <CreditCard size={24} aria-hidden="true" /> : <Ellipsis size={24} aria-hidden="true" />}{paymentLabels[method]}</button>)}</div>
-<label className="checkout-split"><input type="checkbox" checked={splitPayment} disabled={paying} onChange={(event) => { setSplitPayment(event.target.checked); const remaining = Math.max(0, paymentTotal(sale)).toFixed(2); setPaymentAmount(remaining); setCashReceived(remaining); setPaymentError(""); }} />Dividi tra più metodi di pagamento</label>
-{splitPayment && <label>Quanto paga con {paymentLabels[paymentMethod].toLowerCase()}? €<input inputMode="decimal" value={paymentAmount} disabled={paying} onChange={(event) => { setPaymentAmount(event.target.value); setCashReceived(event.target.value); }} /><small>Registra questa quota, poi scegli come incassare il residuo.</small></label>}
-{paymentMethod === "CASH" && <label>Contanti consegnati dal cliente €<input inputMode="decimal" value={cashReceived} disabled={paying} onChange={(event) => setCashReceived(event.target.value)} />
-</label>}{paymentMethod !== "CASH" && <details className="checkout-options"><summary>Aggiungi riferimento transazione</summary><label>Riferimento <small>Facoltativo</small>
-<input value={paymentReference} disabled={paying} onChange={(event) => setPaymentReference(event.target.value)} placeholder="Es. numero transazione" />
-</label></details>}{paymentMethod === "CASH" && Number.isFinite(decimal(cashReceived)) && decimal(cashReceived) >= decimal(paymentAmount) && <p className="payment-change">Resto da consegnare: {euro.format(Math.max(0, decimal(cashReceived) - decimal(paymentAmount)))}</p>}
 <details className="checkout-options"><summary>Arrotondamento e buoni</summary>
 <div className="voucher-apply"><label>Totale arrotondato €<input inputMode="decimal" value={roundedTotal} disabled={paying || Boolean(sale?.payments?.length)} onChange={(event) => setRoundedTotal(event.target.value)} /><small>Disponibile prima di registrare pagamenti.</small></label><button type="button" className="secondary-action" disabled={paying || Boolean(sale?.payments?.length)} onClick={applyRounding}>Arrotonda</button></div>
 <div className="voucher-apply"><label>Codice buono<input value={voucherCode} disabled={paying} onChange={(event) => setVoucherCode(event.target.value)} placeholder="Codice buono" /></label><button type="button" className="secondary-action" disabled={paying} onClick={applyVoucher}>Usa buono</button></div></details>
+{Math.round(paymentTotal(sale) * 100) > 0 ? <section className="checkout-entry"><h4>Pagamento</h4>
+{!splitPayment && <div className="checkout-methods" role="group" aria-label="Metodo di pagamento">{["CASH", "CARD"].map((method) => <button key={method} type="button" aria-pressed={paymentMethod === method} disabled={paying} onClick={() => { setPaymentMethod(method); setPaymentError(""); }}>{method === "CASH" ? <Banknote size={24} aria-hidden="true" /> : method === "CARD" ? <CreditCard size={24} aria-hidden="true" /> : <CreditCard size={24} aria-hidden="true" />}{paymentLabels[method]}</button>)}</div>}
+<label className="checkout-split"><input type="checkbox" checked={splitPayment} disabled={paying} onChange={(event) => { setSplitPayment(event.target.checked); const remaining = Math.max(0, paymentTotal(sale)).toFixed(2); setPaymentAmount(remaining); setCashReceived(remaining); setSplitCash(remaining); setSplitCard("0.00"); setPaymentError(""); }} />Dividi tra più metodi di pagamento</label>
+{splitPayment && <><label>Pagamento contanti €<input inputMode="decimal" value={splitCash} disabled={paying} onChange={(event) => { setSplitCash(event.target.value); setCashReceived(event.target.value); }} /></label><label>Pagamento carta €<input inputMode="decimal" value={splitCard} disabled={paying} onChange={(event) => setSplitCard(event.target.value)} /></label><p className="checkout-split-total">Totale inserito: {euro.format((decimal(splitCash) || 0) + (decimal(splitCard) || 0))} · Da coprire: {euro.format(Math.max(0, paymentTotal(sale)))}</p></>}
+{(splitPayment ? decimal(splitCash) > 0 : paymentMethod === "CASH") && <label>Contanti consegnati dal cliente €<input inputMode="decimal" value={cashReceived} disabled={paying} onChange={(event) => setCashReceived(event.target.value)} />
+</label>}{!splitPayment && paymentMethod !== "CASH" && <details className="checkout-options"><summary>Aggiungi riferimento transazione</summary><label>Riferimento <small>Facoltativo</small>
+<input value={paymentReference} disabled={paying} onChange={(event) => setPaymentReference(event.target.value)} placeholder="Es. numero transazione" />
+</label></details>}{(splitPayment ? decimal(splitCash) > 0 : paymentMethod === "CASH") && Number.isFinite(decimal(cashReceived)) && decimal(cashReceived) >= decimal(splitPayment ? splitCash : paymentAmount) && <p className="payment-change">Resto da consegnare: {euro.format(Math.max(0, decimal(cashReceived) - decimal(splitPayment ? splitCash : paymentAmount)))}</p>}
+
 </section> : <p className="payment-change">Il totale è coperto. Puoi concludere la vendita.</p>}
 {voucherMessage && <p className="voucher-message" role="status">{voucherMessage}</p>}{paymentError && <p className="payment-error" role="alert">{paymentError}</p>}<footer>
 <button type="button" className="secondary-action" disabled={paying} onClick={() => setPaymentOpen(false)}>Torna alla vendita</button>
-<button type="button" className="primary-action" disabled={paying} onClick={() => Math.round(paymentTotal(sale) * 100) > 0 ? registerPayment(!splitPayment) : completePayment()}>{paying ? "Attendi..." : Math.round(paymentTotal(sale) * 100) <= 0 ? "Concludi vendita" : splitPayment ? `Registra quota${Number.isFinite(decimal(paymentAmount)) ? ` · ${euro.format(decimal(paymentAmount))}` : ""}` : "Incassa e concludi"}</button>
+<button type="button" className="primary-action" disabled={paying} onClick={() => Math.round(paymentTotal(sale) * 100) > 0 ? (splitPayment ? registerSplitPayment() : registerPayment(true)) : completePayment()}>{paying ? "Attendi..." : Math.round(paymentTotal(sale) * 100) <= 0 ? "Concludi vendita" : "Incassa e concludi"}</button>
 </footer>
 </section>
 </div>}

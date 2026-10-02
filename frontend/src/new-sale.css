@@ -34,6 +34,8 @@
 .receipt-total span{font-size:13px;font-weight:800}
 .receipt-total strong{font-size:23px}
 .receipt-pay{justify-content:center}
+.receipt-actions{display:flex;flex-direction:column;align-items:center;gap:12px;padding-top:8px}
+.receipt-actions>button{display:flex;align-items:center;justify-content:center;width:min(100%,280px);box-sizing:border-box;min-height:44px;padding:11px 18px;text-align:center}
 .receipt-pay:disabled{opacity:.45;cursor:not-allowed}
 .sale-tools{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin:10px 0}.sale-tools button{height:31px;border:1px solid #e2dddf;border-radius:7px;padding:0 9px;background:#fff;color:#4d464c;font-size:11px;font-weight:800;cursor:pointer}.sale-tools button:hover{border-color:#ed001b;color:#b70018}.sale-selection-dialog{max-height:calc(100vh - 40px);overflow:auto}.customer-search{display:flex;gap:8px}.customer-search input{min-width:0;flex:1}.selection-row,.gift-item-row{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid #e8e3e4;border-radius:9px;padding:11px;background:#fff;text-align:left}.selection-row{cursor:pointer}.selection-row:hover{border-color:#ed001b}.selection-row strong,.gift-item-row strong{display:block;font-size:13px}.selection-row span,.gift-item-row span{display:block;margin-top:3px;color:#817b80;font-size:11px}.selection-empty{margin:0;color:#817b80;text-align:center;font-size:13px}.voucher-apply{display:flex;align-items:end;gap:8px}.voucher-apply label{flex:1}.voucher-message{margin:0;padding:10px 12px;border-radius:8px;background:#edf9f1;color:#167444;font-size:13px;font-weight:800}
 @media(max-width:850px){.pos-layout{grid-template-columns:1fr}
@@ -87,7 +89,7 @@
 .checkout-payments small{display:block;margin-top:4px;color:#736b71;font-size:12px}
 .checkout-dialog footer{border-top:1px solid #eee9eb;padding-top:15px;flex-wrap:wrap}
 .checkout-dialog button:disabled{opacity:.5;cursor:not-allowed}
-.checkout-methods{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+.checkout-methods{display:grid;grid-template-columns:repeat(2,1fr);gap:9px}
 .checkout-methods button{display:grid;gap:6px;justify-items:center;padding:14px 8px;border:1px solid #ded9db;border-radius:10px;background:#fff;color:#514a50;font:inherit;font-size:14px;font-weight:800;cursor:pointer}
 .checkout-methods button span{font-size:23px;line-height:1}
 .checkout-methods button[aria-pressed=true]{border:2px solid #ed001b;padding:13px 7px;background:#fff5f6;color:#c70019}
