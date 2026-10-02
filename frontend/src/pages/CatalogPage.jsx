@@ -9,7 +9,7 @@ const currentYear = String(new Date().getFullYear());
 const blank = {
   code: "", name: "", description: "", brand: "", category: "", tax_rate: "",
   season_type: "", season_year: currentYear, sku: "", size: "", color: "",
-  barcode: "", barcodeId: "", sale_price: "", current_sale_price: "",
+  barcode: "", barcodeId: "", purchase_price: "", sale_price: "", current_sale_price: "",
 };
 const blankBulk = { brand: "", category: "", color: "", size: "", sale_price: "", season_type: "", season_year: currentYear };
 const Field = ({ label, children }) => <label className="catalog-field"><span>{label}</span>{children}</label>;
@@ -29,6 +29,7 @@ export default function CatalogPage() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(blank);
   const [options, setOptions] = useState({ brands: [], categories: [], seasons: [], taxes: [], sizes: [], colors: [] });
+  const [defaultMarkup, setDefaultMarkup] = useState(2.5);
   const [saving, setSaving] = useState(false);
   const [skuLoading, setSkuLoading] = useState(false);
   const [error, setError] = useState("");
@@ -55,13 +56,22 @@ export default function CatalogPage() {
     Promise.all([
       request("/catalog/brands/?active=true"), request("/catalog/categories/?active=true"),
       request("/catalog/seasons/?active=true"), request("/core/tax-rates/?is_active=true"),
-      request("/catalog/sizes/?active=true"), request("/catalog/colors/?active=true"),
-    ]).then(([brands, categories, seasons, taxes, sizes, colors]) => {
+      request("/catalog/sizes/?active=true"), request("/catalog/colors/?active=true"), request("/core/settings/"),
+    ]).then(([brands, categories, seasons, taxes, sizes, colors, settings]) => {
       setOptions({ brands: list(brands), categories: list(categories), seasons: list(seasons), taxes: list(taxes), sizes: list(sizes), colors: list(colors) });
+      const markup = Number(list(settings)[0]?.default_markup);
+      if (Number.isFinite(markup) && markup > 0) setDefaultMarkup(markup);
     }).catch((requestError) => setError(requestError.message));
   }, []);
 
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const updatePurchasePrice = (value) => setForm((current) => {
+    const purchasePrice = Number(value);
+    const suggestedSalePrice = Number.isFinite(purchasePrice) && purchasePrice > 0
+      ? (purchasePrice * defaultMarkup).toFixed(2)
+      : "";
+    return { ...current, purchase_price: value, sale_price: suggestedSalePrice };
+  });
   const updateBulk = (key, value) => setBulk((current) => ({ ...current, [key]: value }));
   const close = () => { if (!saving && !skuLoading) { setOpen(false); setEditing(null); setError(""); } };
   const toggleSelected = (id) => setSelected((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
@@ -123,6 +133,7 @@ export default function CatalogPage() {
         code: product.code, name: product.name, description: product.description || "", brand: product.brand || "", category: product.category || "", tax_rate: product.tax_rate || "",
         season_type: season?.season_type || "", season_year: season?.year ? String(season.year) : currentYear,
         sku: item.sku, size: item.size, color: item.color || "", barcode: barcode?.code || "", barcodeId: barcode?.id || "",
+        purchase_price: item.purchase_price || "",
         sale_price: price?.amount || "", current_sale_price: price?.amount || "",
       });
       setOpen(true);
@@ -148,10 +159,10 @@ export default function CatalogPage() {
       let variantId = editing?.id;
       if (editing) {
         await request(`/catalog/products/${editing.product}/`, { method: "PATCH", body: JSON.stringify(productData) });
-        await request(`/catalog/variants/${editing.id}/`, { method: "PATCH", body: JSON.stringify({ sku: form.sku, size: form.size, color: form.color || null }) });
+        await request(`/catalog/variants/${editing.id}/`, { method: "PATCH", body: JSON.stringify({ sku: form.sku, size: form.size, color: form.color || null, purchase_price: form.purchase_price || null }) });
       } else {
         const product = await request("/catalog/products/", { method: "POST", body: JSON.stringify(productData) });
-        const variant = await request("/catalog/variants/", { method: "POST", body: JSON.stringify({ product: product.id, sku: form.sku, size: form.size, color: form.color || null }) });
+        const variant = await request("/catalog/variants/", { method: "POST", body: JSON.stringify({ product: product.id, sku: form.sku, size: form.size, color: form.color || null, purchase_price: form.purchase_price || null }) });
         variantId = variant.id;
       }
       if (form.barcode.trim()) {
@@ -222,7 +233,9 @@ export default function CatalogPage() {
       {[ ["Marca", "brands", "brand", false], ["Categoria", "categories", "category", true] ].map(([label, kind, key, required]) => <Field key={key} label={label}><span className="select-with-add"><select required={required} value={form[key]} onChange={(event) => update(key, event.target.value)}><option value="">{required ? "Seleziona" : "Nessuna"}</option>{options[kind].map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button type="button" onClick={() => quickAdd(kind)}><Plus size={16} /></button></span></Field>)}
       <Field label="IVA"><select required value={form.tax_rate} onChange={(event) => update("tax_rate", event.target.value)}><option value="">Seleziona</option>{options.taxes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field><Field label="SKU"><input required disabled={!editing && skuLoading} value={form.sku} placeholder={skuLoading ? "Generazione SKU..." : "SKU progressivo"} onChange={(event) => update("sku", event.target.value)} /></Field>
       <Field label="Taglia"><select required value={form.size} onChange={(event) => update("size", event.target.value)}><option value="">Seleziona</option>{options.sizes.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></Field><Field label="Colore"><span className="select-with-add"><select value={form.color} onChange={(event) => update("color", event.target.value)}><option value="">Nessuno</option>{options.colors.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button type="button" onClick={() => quickAdd("colors")}><Plus size={16} /></button></span></Field>
-      <Field label="Prezzo vendita"><input required type="number" min="0.01" step="0.01" value={form.sale_price} onChange={(event) => update("sale_price", event.target.value)} /></Field><Field label="Barcode"><input value={form.barcode} onChange={(event) => update("barcode", event.target.value)} /></Field>
+      <Field label="Prezzo di acquisto"><input type="number" min="0" step="0.01" value={form.purchase_price} onChange={(event) => updatePurchasePrice(event.target.value)} placeholder="0,00" /></Field>
+      <Field label="Prezzo vendita"><input required type="number" min="0.01" step="0.01" value={form.sale_price} onChange={(event) => update("sale_price", event.target.value)} /><small className="catalog-markup">{(() => { const purchase = Number(form.purchase_price); const sale = Number(form.sale_price); const multiplier = purchase > 0 && sale > 0 ? sale / purchase : defaultMarkup; const percentage = (multiplier - 1) * 100; return `Ricarico applicato: ${multiplier.toFixed(2)}× · +${percentage.toFixed(2)}%`; })()}</small></Field>
+      <Field label="Barcode"><input value={form.barcode} onChange={(event) => update("barcode", event.target.value)} /></Field>
     </div><footer><button type="button" className="secondary-action" onClick={close}>Annulla</button><button className="primary-action" disabled={saving || skuLoading}>{saving ? "Salvataggio..." : skuLoading ? "Generazione SKU..." : "Salva modifiche"}</button></footer></form></div>}
   </section>;
 }

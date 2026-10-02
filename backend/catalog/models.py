@@ -236,6 +236,14 @@ class ProductVariant(UUIDTimeStampedModel):
         on_delete=models.PROTECT,
         related_name="product_variants",
     )
+    # Valore di riferimento del catalogo per calcolare il prezzo di vendita.
+    # Il costo contabile di magazzino continua a essere calcolato dai carichi.
+    purchase_price = models.DecimalField(
+        max_digits=14,
+        decimal_places=4,
+        null=True,
+        blank=True,
+    )
     is_active = models.BooleanField(default=True)
     archived_at = models.DateTimeField(null=True, blank=True)
 

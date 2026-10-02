@@ -285,8 +285,53 @@ def expense_viewset(base):
 
 
 def document_viewset(base):
-    from documents.models import DocumentAttachment
+    from rest_framework.validators import UniqueTogetherValidator
+
+    from documents.models import BusinessDocument, DocumentAttachment
     from documents.services import cancel_document, finalize_document
+
+    base_serializer = base.serializer_class
+
+    class BusinessDocumentSerializer(base_serializer):
+        """Restituisce un messaggio utile invece del vincolo tecnico del database."""
+
+        def get_validators(self):
+            return [
+                validator
+                for validator in super().get_validators()
+                if not (
+                    isinstance(validator, UniqueTogetherValidator)
+                    and set(validator.fields) == {"document_type", "number"}
+                )
+            ]
+
+        def validate(self, attributes):
+            attributes = super().validate(attributes)
+            document_type = attributes.get("document_type") or getattr(self.instance, "document_type", None)
+            number = str(attributes.get("number", getattr(self.instance, "number", "")) or "").strip()
+            if not document_type or not number:
+                return attributes
+
+            existing = BusinessDocument.objects.filter(
+                document_type=document_type,
+                number__iexact=number,
+            )
+            if self.instance:
+                existing = existing.exclude(pk=self.instance.pk)
+            existing = existing.first()
+            if existing:
+                status = "annullata" if existing.status == BusinessDocument.Status.CANCELLED else "già registrata"
+                supplier = f" di {existing.counterparty_name}" if existing.counterparty_name else ""
+                raise serializers.ValidationError({
+                    "number": (
+                        f"Esiste già una {existing.document_type.name.lower()} n. {number}{supplier}, "
+                        f"attualmente {status}. Il numero deve essere unico per ogni tipo di documento: "
+                        "ripristina il documento esistente oppure inserisci il numero corretto."
+                    )
+                })
+            return attributes
+
+    base.serializer_class = BusinessDocumentSerializer
     @action(detail=True,methods=("post",))
     def finalize(self,request,pk=None): return Response(self.get_serializer(finalize_document(document=self.get_object(),finalized_by=request.user,number=request.data.get("number"))).data)
     @action(detail=True,methods=("post",))
