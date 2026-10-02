@@ -87,3 +87,14 @@
 .checkout-payments small{display:block;margin-top:4px;color:#736b71;font-size:12px}
 .checkout-dialog footer{border-top:1px solid #eee9eb;padding-top:15px;flex-wrap:wrap}
 .checkout-dialog button:disabled{opacity:.5;cursor:not-allowed}
+.checkout-methods{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+.checkout-methods button{display:grid;gap:6px;justify-items:center;padding:14px 8px;border:1px solid #ded9db;border-radius:10px;background:#fff;color:#514a50;font:inherit;font-size:14px;font-weight:800;cursor:pointer}
+.checkout-methods button span{font-size:23px;line-height:1}
+.checkout-methods button[aria-pressed=true]{border:2px solid #ed001b;padding:13px 7px;background:#fff5f6;color:#c70019}
+.checkout-methods button:focus-visible{outline:2px solid #18151a;outline-offset:3px}
+.checkout-entry label.checkout-split{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:600;padding:6px 0}
+.checkout-split input[type=checkbox]{width:18px;height:18px;margin:0;padding:0;accent-color:#ed001b}
+.checkout-options .voucher-apply+.voucher-apply{margin-top:15px;padding-top:15px;border-top:1px solid #eee9eb}
+.checkout-dialog footer{position:sticky;bottom:-22px;background:#fff;padding-bottom:5px}
+.checkout-dialog footer .primary-action{flex:1;min-height:44px}
+@media(max-width:480px){.checkout-dialog footer{flex-direction:column-reverse}.checkout-dialog footer button{width:100%}.checkout-payments>div{flex-wrap:wrap}.checkout-remaining strong{font-size:22px}}
