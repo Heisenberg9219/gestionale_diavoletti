@@ -14,6 +14,11 @@ export default function NewSalePage({ onNavigate }) {
   const [sale, setSale] = useState(null);
   const [query, setQuery] = useState("");
   const [matches, setMatches] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [searchMore, setSearchMore] = useState(false);
+  const productRequest = useRef(0);
+  const productTimer = useRef(null);
   const [labels, setLabels] = useState({});
   const [message, setMessage] = useState("");
   const [paymentOpen, setPaymentOpen] = useState(false);
@@ -64,15 +69,36 @@ export default function NewSalePage({ onNavigate }) {
     return created;
   }
 
+  useEffect(() => {
+    if (!query.trim()) {
+      setMatches([]); setSearchLoading(false); setSearchError(""); setSearchMore(false);
+      return;
+    }
+    productTimer.current = setTimeout(() => searchProducts(query), 250);
+    return () => { clearTimeout(productTimer.current); productRequest.current += 1; };
+  }, [query]);
+
+  async function searchProducts(value, addSingle = false) {
+    clearTimeout(productTimer.current);
+    const requestId = ++productRequest.current;
+    setSearchLoading(true); setSearchError(""); setMatches([]); setSearchMore(false);
+    try {
+      const result = await request(`/catalog/variants/?search=${encodeURIComponent(value.trim())}`);
+      if (requestId !== productRequest.current) return;
+      const found = list(result);
+      setMatches(found); setSearchMore(Boolean(result.next));
+      if (addSingle && found.length === 1 && !result.next) await addVariant(found[0]);
+    } catch {
+      if (requestId === productRequest.current) setSearchError("Ricerca articoli non disponibile. Riprova.");
+    } finally {
+      if (requestId === productRequest.current) setSearchLoading(false);
+    }
+  }
   async function search(event) {
     event?.preventDefault();
     if (!query.trim()) return;
     setMessage("");
-    try {
-      const found = list(await request(`/catalog/variants/?search=${encodeURIComponent(query.trim())}`));
-      setMatches(found);
-      if (found.length === 1) await addVariant(found[0]);
-    } catch { setMessage("Ricerca articolo non disponibile."); }
+    await searchProducts(query, true);
   }
 
   async function addVariant(variant, pending = null) {
@@ -223,6 +249,31 @@ export default function NewSalePage({ onNavigate }) {
     } catch (error) { setPaymentError(`Vendita non conclusa: ${error.message}`); }
     finally { setPaying(false); }
   }
+  async function removePayment(payment) {
+    if (!window.confirm(`Rimuovere il pagamento di ${euro.format(Number(payment.amount))}? Questa operazione rimuove la registrazione; eventuali contanti o pagamenti con carta vanno restituiti separatamente.`)) return;
+    setPaying(true); setPaymentError("");
+    try {
+      const updated = await request(`/sales/sales/${sale.id}/remove-payment/`, { method: "POST", body: JSON.stringify({ payment: payment.id, reason: "Pagamento rimosso dalla cassa" }) });
+      setSale(updated);
+      const remaining = Math.max(0, paymentTotal(updated)).toFixed(2);
+      setPaymentAmount(remaining); setCashReceived(remaining); setVoucherMessage("");
+    } catch (error) { setPaymentError(`Impossibile rimuovere il pagamento: ${error.message}`); }
+    finally { setPaying(false); }
+  }
+  async function cancelSale() {
+    if (sale.payments?.length) {
+      await openPayment();
+      setPaymentError("Rimuovi i pagamenti registrati, poi torna alla vendita e premi Annulla vendita.");
+      return;
+    }
+    if (!window.confirm("Annullare questa vendita e svuotare il carrello?")) return;
+    setPaying(true);
+    try {
+      await request(`/sales/sales/${sale.id}/cancel/`, { method: "POST", body: JSON.stringify({ reason: "Vendita annullata dalla cassa" }) });
+      setSale(null); setLabels({}); setMessage("Vendita annullata."); inputRef.current?.focus();
+    } catch (error) { setMessage(`Impossibile annullare la vendita: ${error.message}`); }
+    finally { setPaying(false); }
+  }
   async function registerPayment() {
     const amount = Number(String(paymentAmount).replace(",", "."));
     const received = Number(String(cashReceived).replace(",", "."));
@@ -260,11 +311,16 @@ export default function NewSalePage({ onNavigate }) {
 <section className="pos-products">
 <form className="pos-search" onSubmit={search}>
 <Barcode size={21} />
-<input ref={inputRef} autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Scansiona barcode o cerca per SKU / nome" />
+<input ref={inputRef} autoFocus aria-label="Cerca articolo per barcode, SKU o nome" value={query} onChange={(event) => { productRequest.current += 1; clearTimeout(productTimer.current); setMatches([]); setSearchError(""); setSearchMore(false); setSearchLoading(Boolean(event.target.value.trim())); setQuery(event.target.value); }} placeholder="Scansiona barcode o cerca per SKU / nome" />
 <button aria-label="Cerca">
 <Search size={19} />
 </button>
-</form>{message && <p className="pos-message">{message}</p>}{matches.length > 1 && <div className="product-matches">{matches.map((variant) => <button key={variant.id} onClick={() => addVariant(variant)}>
+</form>{message && <p className="pos-message">{message}</p>}
+{searchLoading && <p className="pos-message" role="status">Ricerca articoli…</p>}
+{searchError && <p className="pos-message" role="alert">{searchError}</p>}
+{query.trim() && !searchLoading && !searchError && !matches.length && <p className="pos-message">Nessun articolo trovato.</p>}
+{searchMore && <p className="pos-message">Continua a scrivere per restringere la ricerca: sono mostrati i primi risultati.</p>}
+{matches.length > 0 && <div className="product-matches">{matches.map((variant) => <button type="button" disabled={adding} key={variant.id} onClick={() => addVariant(variant)}>
 <div>
 <strong>{variant.product_name}</strong>
 <span>{variant.sku} · {variant.color_name || ""} {variant.size_label || ""}</span>
@@ -307,6 +363,7 @@ export default function NewSalePage({ onNavigate }) {
 <strong>{euro.format(Number(sale?.final_total_amount || 0))}</strong>
 </div>
 <button className="primary-action receipt-pay" disabled={!sale?.lines?.length} onClick={openPayment}>Vai al pagamento</button>
+{sale && <button type="button" className="secondary-action" disabled={paying || adding} onClick={cancelSale}>Annulla vendita</button>}
 </aside>
 </div>
     {reservedPrompt && <div className="payment-layer" role="dialog" aria-modal="true" aria-labelledby="reserved-title">
@@ -353,7 +410,7 @@ export default function NewSalePage({ onNavigate }) {
 <div className="voucher-apply"><label>Nuovo totale €<input inputMode="decimal" value={roundedTotal} disabled={paying || Boolean(sale?.payments?.length)} onChange={(event) => setRoundedTotal(event.target.value)} /></label><button type="button" className="secondary-action" disabled={paying || Boolean(sale?.payments?.length)} onClick={applyRounding}>Applica</button></div>
 </details>
 {Number(sale?.manual_total_adjustment || 0) !== 0 && <p className="payment-change">Arrotondamento applicato: {Number(sale.manual_total_adjustment) > 0 ? "+" : ""}{euro.format(Number(sale.manual_total_adjustment))}</p>}
-{Boolean(sale?.payments?.length) && <div className="checkout-payments"><h4>Pagamenti registrati</h4>{sale.payments.map((item) => <div key={item.id}><span>{paymentLabels[item.method] || item.method}{item.method === "CASH" && Number(item.cash_change_amount) > 0 && <small>Resto consegnato: {euro.format(Number(item.cash_change_amount))}</small>}</span><strong>{euro.format(Number(item.amount))}</strong></div>)}</div>}
+{Boolean(sale?.payments?.length) && <div className="checkout-payments"><h4>Pagamenti registrati</h4>{sale.payments.map((item) => <div key={item.id}><span>{paymentLabels[item.method] || item.method}{item.method === "CASH" && Number(item.cash_change_amount) > 0 && <small>Resto consegnato: {euro.format(Number(item.cash_change_amount))}</small>}</span><strong>{euro.format(Number(item.amount))}</strong><button type="button" className="secondary-action" disabled={paying} onClick={() => removePayment(item)}>Rimuovi</button></div>)}</div>}
 {Math.round(paymentTotal(sale) * 100) > 0 ? <section className="checkout-entry"><h4>Registra un pagamento</h4><p>Per dividere il pagamento, registra una parte e poi scegli il metodo per il residuo.</p>
 <label>Metodo di pagamento<select value={paymentMethod} disabled={paying} onChange={(event) => { setPaymentMethod(event.target.value); setPaymentError(""); }}>
 <option value="CASH">Contanti</option>
