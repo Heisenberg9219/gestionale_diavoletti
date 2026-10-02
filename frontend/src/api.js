@@ -38,7 +38,10 @@ export async function request(path, options = {}) {
     const body = await response.json().catch(() => ({}));
     const details = body.error?.details;
     const readable = details && (typeof details === "string" ? details : Object.values(details).flat().join(" "));
-    throw new Error(readable || body.error?.message || body.detail || "Operazione non riuscita.");
+    const fallback = response.status >= 500
+      ? "Errore del server durante l'operazione. Riprova dopo aver aggiornato il backend."
+      : `Operazione non riuscita (HTTP ${response.status}).`;
+    throw new Error(readable || body.error?.message || body.detail || fallback);
   }
   return response.status === 204 ? null : response.json();
 }

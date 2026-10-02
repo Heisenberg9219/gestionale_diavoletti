@@ -271,9 +271,9 @@ def set_sale_line(
 
     from giftlists.services import validate_reserved_stock_sale
 
-    balance = StockBalance.objects.select_for_update().filter(
+    balance = StockBalance.objects.select_for_update(of=("self",)).filter(
         variant=variant, location=sale.location,
-    ).first()
+    ).order_by("pk").first()
     available = balance.quantity_on_hand if balance else 0
     if quantity > available:
         raise ValidationError(
