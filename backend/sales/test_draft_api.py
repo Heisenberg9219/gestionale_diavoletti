@@ -27,6 +27,21 @@ class DraftApiTests(TestCase):
     def post(self, action, data):
         return self.client.post(f"/api/v1/sales/sales/{self.sale.pk}/{action}/", data, format="json")
 
+    def test_catalog_stock_is_specific_to_register_location(self):
+        from core.models import Location
+        from inventory.models import StockBalance
+        other = Location.objects.create(code="OTHER_STOCK", name="Altra sede", type=Location.Type.SALES_FLOOR)
+        StockBalance.objects.create(variant=self.variant, location=other, quantity_on_hand=7)
+        result = self.client.get(f"/api/v1/catalog/variants/{self.variant.pk}/", {"stock_scope": "all"})
+        self.assertEqual(result.data["stock_quantity"], 17)
+        for location, expected in [(self.location, 10), (other, 7)]:
+            result = self.client.get(f"/api/v1/catalog/variants/{self.variant.pk}/", {"stock_location": str(location.pk)})
+            self.assertEqual(result.status_code, 200, result.data)
+            self.assertEqual(result.data["stock_quantity"], expected)
+        StockBalance.objects.filter(variant=self.variant, location=self.location).delete()
+        result = self.client.get(f"/api/v1/catalog/variants/{self.variant.pk}/", {"stock_location": str(self.location.pk)})
+        self.assertEqual(result.data["stock_quantity"], 0)
+
     def test_remove_line_clears_total_and_records_audit(self):
         result = self.post("remove-line", {"line": str(self.line.pk), "reason": "Errore"})
         self.assertEqual(result.status_code, 200, result.data)

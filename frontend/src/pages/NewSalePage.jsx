@@ -86,11 +86,14 @@ export default function NewSalePage({ onNavigate }) {
     const requestId = ++productRequest.current;
     setSearchLoading(true); setSearchError(""); setMatches([]); setSearchMore(false);
     try {
-      const result = await request(`/catalog/variants/?search=${encodeURIComponent(value.trim())}`);
+      const result = await request(`/catalog/variants/?search=${encodeURIComponent(value.trim())}&stock_scope=all`);
       if (requestId !== productRequest.current) return;
       const found = list(result);
       setMatches(found); setSearchMore(Boolean(result.next));
-      if (addSingle && found.length === 1 && !result.next) await addVariant(found[0]);
+      if (addSingle && found.length === 1 && !result.next) {
+        if (found[0].stock_quantity <= (sale?.lines?.find((line) => line.variant === found[0].id)?.quantity || 0)) setMessage("Nessun altro pezzo disponibile nei magazzini.");
+        else await addVariant(found[0]);
+      }
     } catch {
       if (requestId === productRequest.current) setSearchError("Ricerca articoli non disponibile. Riprova.");
     } finally {
@@ -355,12 +358,13 @@ export default function NewSalePage({ onNavigate }) {
 {searchError && <p className="pos-message" role="alert">{searchError}</p>}
 {query.trim() && !searchLoading && !searchError && !matches.length && <p className="pos-message">Nessun articolo trovato.</p>}
 {searchMore && <p className="pos-message">Continua a scrivere per restringere la ricerca: sono mostrati i primi risultati.</p>}
-{matches.length > 0 && <div className="product-matches">{matches.map((variant) => <button type="button" disabled={adding} key={variant.id} onClick={() => addVariant(variant)}>
+{matches.length > 0 && <div className="product-matches">{matches.map((variant) => <button type="button" disabled={adding || variant.stock_quantity <= (sale?.lines?.find((line) => line.variant === variant.id)?.quantity || 0)} key={variant.id} onClick={() => addVariant(variant)}>
 <div>
 <strong>{variant.product_name}</strong>
 <span>{variant.sku} · {variant.color_name || ""} {variant.size_label || ""}</span>
+{variant.stock_quantity !== undefined && <span>Giacenza totale magazzini: {variant.stock_quantity} · Nel carrello: {sale?.lines?.find((line) => line.variant === variant.id)?.quantity || 0}</span>}
 </div>
-<b>Seleziona</b>
+<b>{variant.stock_quantity <= (sale?.lines?.find((line) => line.variant === variant.id)?.quantity || 0) ? "Non disponibile" : "Seleziona"}</b>
 </button>)}</div>}<div className="pos-hint">
 <Barcode size={19} />
 <span>Con uno scanner USB il codice viene inserito qui automaticamente: premi Invio per aggiungere l’articolo.</span>

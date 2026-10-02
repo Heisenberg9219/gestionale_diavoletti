@@ -69,6 +69,7 @@ class ProductSerializer(ArchiveModelSerializer):
 
 
 class ProductVariantSerializer(ArchiveModelSerializer):
+    stock_quantity = serializers.IntegerField(read_only=True)
     product_name = serializers.CharField(source="product.name", read_only=True)
     product_code = serializers.CharField(source="product.code", read_only=True)
     brand_name = serializers.CharField(source="product.brand.name", read_only=True)

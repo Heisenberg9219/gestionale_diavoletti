@@ -9,7 +9,7 @@ from inventory.models import (
     StockMovement,
     VariantInventoryCost,
 )
-from inventory.services import post_stock_movement
+from inventory.services import post_stock_movement, transfer_stock
 from pricing.models import VariantSalePrice
 from .models import (
     CashRegister,
@@ -271,10 +271,10 @@ def set_sale_line(
 
     from giftlists.services import validate_reserved_stock_sale
 
-    balance = StockBalance.objects.select_for_update(of=("self",)).filter(
-        variant=variant, location=sale.location,
-    ).order_by("pk").first()
-    available = balance.quantity_on_hand if balance else 0
+    balances = list(StockBalance.objects.select_for_update(of=("self",)).filter(
+        variant=variant,
+    ).order_by("pk"))
+    available = sum(balance.quantity_on_hand for balance in balances)
     if quantity > available:
         raise ValidationError(
             f"Giacenza insufficiente: disponibili {available}, richiesti {quantity}."
@@ -789,6 +789,25 @@ def confirm_sale(
     )
 
     for line in lines:
+        balances = list(StockBalance.objects.select_for_update(of=("self",)).filter(
+            variant=line.variant,
+        ).order_by("pk"))
+        available = sum(balance.quantity_on_hand for balance in balances)
+        if line.quantity > available:
+            raise ValidationError(f"Giacenza insufficiente per {line.sku_snapshot}: disponibili {available}, richiesti {line.quantity}.")
+        local = next((balance.quantity_on_hand for balance in balances if balance.location_id == sale.location_id), 0)
+        missing = max(0, line.quantity - local)
+        for balance in balances:
+            if missing == 0:
+                break
+            if balance.location_id == sale.location_id or balance.quantity_on_hand <= 0:
+                continue
+            quantity = min(missing, balance.quantity_on_hand)
+            transfer_stock(variant=line.variant, source_location=balance.location,
+                destination_location=sale.location, quantity=quantity,
+                occurred_at=confirmed_at, reference_number=sale_number,
+                notes="Trasferimento per vendita alla cassa", created_by=confirmed_by)
+            missing -= quantity
         movement = post_stock_movement(
             variant=line.variant,
             location=sale.location,
@@ -822,7 +841,6 @@ def confirm_sale(
                 recorded_by=confirmed_by,
             )
 
-        from inventory.models import StockBalance
         from notifications.services import notify_stock_depleted_to_owners
 
         stock_balance = StockBalance.objects.get(

@@ -114,12 +114,37 @@ class SalesServiceTests(TestCase):
             self.add_standard_line(sale=sale, quantity=11)
         self.assertEqual(sale.lines.get().quantity, 10)
 
+    def test_cart_uses_stock_in_other_warehouses(self):
+        other = Location.objects.create(code="OTHER_CART", name="Magazzino", type=Location.Type.SALES_FLOOR)
+        StockBalance.objects.filter(variant=self.variant, location=self.location).update(quantity_on_hand=0)
+        StockBalance.objects.create(variant=self.variant, location=other, quantity_on_hand=3)
+        sale = self.create_sale()
+        self.add_standard_line(sale=sale, quantity=3)
+        with self.assertRaisesMessage(ValidationError, "Giacenza insufficiente"):
+            self.add_standard_line(sale=sale, quantity=4)
+        self.assertEqual(sale.lines.get().quantity, 3)
+
     def test_cart_cannot_add_without_stock(self):
         StockBalance.objects.filter(variant=self.variant, location=self.location).delete()
         sale = self.create_sale()
         with self.assertRaisesMessage(ValidationError, "Giacenza insufficiente"):
             self.add_standard_line(sale=sale)
         self.assertFalse(sale.lines.exists())
+
+    def test_confirmation_uses_stock_across_warehouses(self):
+        from unittest.mock import patch
+        other = Location.objects.create(code="OTHER_CONFIRM", name="Magazzino", type=Location.Type.SALES_FLOOR)
+        StockBalance.objects.filter(variant=self.variant, location=self.location).update(quantity_on_hand=1)
+        StockBalance.objects.create(variant=self.variant, location=other, quantity_on_hand=2)
+        sale = self.create_sale()
+        self.add_standard_line(sale=sale, quantity=3)
+        add_sale_payment(sale=sale, method=SalePayment.Method.CARD, amount="74.70", created_by=self.user)
+        with patch("sales.services._next_sale_number", return_value="V-TEST-MULTI"):
+            confirm_sale(sale=sale, confirmed_by=self.user)
+        sale.refresh_from_db()
+        self.assertEqual(sale.status, Sale.Status.CONFIRMED)
+        self.assertEqual(StockBalance.objects.get(variant=self.variant, location=self.location).quantity_on_hand, 0)
+        self.assertEqual(StockBalance.objects.get(variant=self.variant, location=other).quantity_on_hand, 0)
 
     def test_manual_line_price_is_recorded(self):
         sale = self.create_sale()

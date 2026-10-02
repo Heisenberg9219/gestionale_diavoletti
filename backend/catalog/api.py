@@ -77,6 +77,22 @@ class ProductVariantViewSet(CatalogViewSet):
         queryset = super().get_queryset()
         if product := self.request.query_params.get("product"): queryset = queryset.filter(product_id=product)
         if barcode := self.request.query_params.get("barcode"): queryset = queryset.filter(barcodes__code=barcode, barcodes__is_active=True)
+        if self.request.query_params.get("stock_scope") == "all":
+            from django.db.models import OuterRef, Subquery, IntegerField, Value, Sum
+            from django.db.models.functions import Coalesce
+            from inventory.models import StockBalance
+            balances = StockBalance.objects.filter(variant_id=OuterRef("pk")).order_by().values("variant_id").annotate(total=Sum("quantity_on_hand"))
+            queryset = queryset.annotate(stock_quantity=Coalesce(Subquery(balances.values("total")[:1]), Value(0), output_field=IntegerField()))
+        elif location := self.request.query_params.get("stock_location"):
+            from rest_framework.serializers import UUIDField
+            from django.db.models import OuterRef, Subquery, IntegerField, Value
+            from django.db.models.functions import Coalesce
+            from inventory.models import StockBalance
+            location = UUIDField().run_validation(location)
+            balances = StockBalance.objects.filter(variant_id=OuterRef("pk"), location_id=location).order_by()
+            queryset = queryset.annotate(stock_quantity=Coalesce(
+                Subquery(balances.values("quantity_on_hand")[:1]), Value(0), output_field=IntegerField(),
+            ))
         queryset = queryset.distinct()
         sort_fields = {
             "sku": "sku",
