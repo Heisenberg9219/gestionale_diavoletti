@@ -17,6 +17,7 @@ export default function NewSalePage({ onNavigate }) {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState("CASH");
   const [paymentAmount, setPaymentAmount] = useState("");
+  const [roundedTotal, setRoundedTotal] = useState("");
   const [cashReceived, setCashReceived] = useState("");
   const [paymentReference, setPaymentReference] = useState("");
   const [paymentError, setPaymentError] = useState("");
@@ -175,12 +176,14 @@ export default function NewSalePage({ onNavigate }) {
     try {
       const currentSale = await request(`/sales/sales/${sale.id}/`);
       const remaining = Math.max(0, paymentTotal(currentSale));
+      setRoundedTotal(Number(currentSale.final_total_amount).toFixed(2));
       setSale(currentSale); setPaymentMethod("CASH"); setPaymentAmount(remaining.toFixed(2)); setCashReceived(remaining.toFixed(2)); setPaymentReference(""); setPaymentError(""); setPaymentOpen(true);
     } catch (error) { setMessage(`Impossibile preparare il pagamento: ${error.message}`); }
   }
   async function applyVoucher() {
     const code = voucherCode.trim().toUpperCase();
     if (!code) return setVoucherMessage("Inserisci il codice del buono.");
+    setPaying(true);
     try {
       const vouchers = list(await request(`/vouchers/vouchers/?search=${encodeURIComponent(code)}&status=ACTIVE`));
       const voucher = vouchers.find((item) => item.code?.toUpperCase() === code);
@@ -191,13 +194,29 @@ export default function NewSalePage({ onNavigate }) {
       const newRemaining = Math.max(0, paymentTotal(refreshed));
       setSale(refreshed); setPaymentAmount(newRemaining.toFixed(2)); setCashReceived(newRemaining.toFixed(2)); setVoucherCode(""); setVoucherMessage(`Buono applicato: ${euro.format(Math.min(Number(voucher.current_balance || 0), remaining))}.`);
     } catch (error) { setVoucherMessage(`Impossibile applicare il buono: ${error.message}`); }
+    finally { setPaying(false); }
+  }
+  async function applyRounding() {
+    const value = roundedTotal.trim();
+    const total = Number(value.replace(",", "."));
+    if (!/^\d+(?:[.,]\d{1,2})?$/.test(value) || !Number.isFinite(total) || total < 0) {
+      return setPaymentError("Inserisci un totale arrotondato valido, con al massimo due decimali.");
+    }
+    setPaying(true); setPaymentError("");
+    try {
+      const updated = await request(`/sales/sales/${sale.id}/set-total/`, { method: "POST", body: JSON.stringify({ final_total_amount: total.toFixed(2), reason: "Arrotondamento al pagamento" }) });
+      setSale(updated); setRoundedTotal(Number(updated.final_total_amount).toFixed(2));
+      const remaining = Math.max(0, paymentTotal(updated)).toFixed(2);
+      setPaymentAmount(remaining); setCashReceived(remaining);
+    } catch (error) { setPaymentError(`Impossibile applicare l'arrotondamento: ${error.message}`); }
+    finally { setPaying(false); }
   }
   async function completePayment() {
     const amount = Number(String(paymentAmount).replace(",", "."));
     const received = Number(String(cashReceived).replace(",", "."));
-    if (amount < 0) return setPaymentError("Inserisci un importo di pagamento valido.");
+    if (!Number.isFinite(amount) || amount < 0) return setPaymentError("Inserisci un importo di pagamento valido.");
     if (amount === 0 && paymentTotal(sale) > 0) return setPaymentError("Inserisci un importo di pagamento valido.");
-    if (paymentMethod === "CASH" && (!received || received < amount)) return setPaymentError("Per i contanti indica un importo ricevuto almeno pari al totale.");
+    if (paymentMethod === "CASH" && (!Number.isFinite(received) || received < amount)) return setPaymentError("Per i contanti indica un importo ricevuto almeno pari al totale.");
     setPaying(true); setPaymentError("");
     try {
       if (amount > 0) await request(`/sales/sales/${sale.id}/add-payment/`, { method: "POST", body: JSON.stringify({ method: paymentMethod, amount: amount.toFixed(2), cash_received_amount: paymentMethod === "CASH" ? received.toFixed(2) : undefined, transaction_reference: paymentReference }) });
@@ -314,6 +333,9 @@ export default function NewSalePage({ onNavigate }) {
 <span>Totale da pagare</span>
 <strong>{euro.format(Number(paymentAmount || 0))}</strong>
 </div>
+<div className="voucher-apply"><label>Totale arrotondato €<input inputMode="decimal" value={roundedTotal} disabled={paying || Boolean(sale?.payments?.length)} onChange={(event) => setRoundedTotal(event.target.value)} /></label><button type="button" className="secondary-action" disabled={paying || Boolean(sale?.payments?.length)} onClick={applyRounding}>Applica</button></div>
+{Boolean(sale?.payments?.length) && <small>Arrotondamento disponibile prima di applicare buoni o registrare pagamenti.</small>}
+{Number(sale?.manual_total_adjustment || 0) !== 0 && <p className="payment-change">Arrotondamento applicato: {Number(sale.manual_total_adjustment) > 0 ? "+" : ""}{euro.format(Number(sale.manual_total_adjustment))}</p>}
 <label>Metodo di pagamento<select value={paymentMethod} disabled={paying} onChange={(event) => setPaymentMethod(event.target.value)}>
 <option value="CASH">Contanti</option>
 <option value="CARD">Carta</option>
