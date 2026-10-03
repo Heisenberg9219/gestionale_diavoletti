@@ -33,3 +33,6 @@
 @media (max-width: 760px) {
   .cash-open-card .register-create-form { grid-template-columns: 1fr; }
 }
+.cash-session-payment-values{grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
+@media(max-width:1000px){.cash-session-payment-values{grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.cash-session-payment-values div+div{border:0;padding-left:0}}
+@media(max-width:520px){.cash-session-payment-values{grid-template-columns:1fr}.cash-session-payment-values div+div{border-top:1px solid #ede9ea;padding-top:16px}}

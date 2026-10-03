@@ -146,6 +146,20 @@ class SalesServiceTests(TestCase):
         self.assertEqual(StockBalance.objects.get(variant=self.variant, location=self.location).quantity_on_hand, 0)
         self.assertEqual(StockBalance.objects.get(variant=self.variant, location=other).quantity_on_hand, 0)
 
+    def test_cash_session_totals_separate_cash_and_card(self):
+        from .serializers import CashSessionSerializer
+        sale = self.create_sale()
+        sale.status = Sale.Status.CONFIRMED
+        sale.number = "V-TEST-TOTALS"
+        sale.save(update_fields=["status", "number"])
+        SalePayment.objects.create(sale=sale, method="CASH", amount="20.00", cash_received_amount="20.00", cash_change_amount="0.00", created_by=self.user)
+        SalePayment.objects.create(sale=sale, method="CARD", amount="30.00", created_by=self.user)
+        draft = Sale.objects.create(cash_session=sale.cash_session, location=self.location, opened_by=self.user)
+        SalePayment.objects.create(sale=draft, method="CARD", amount="99.00", created_by=self.user)
+        data = CashSessionSerializer(sale.cash_session).data
+        self.assertEqual(Decimal(data["cash_payments_total"]), Decimal("20.00"))
+        self.assertEqual(Decimal(data["card_payments_total"]), Decimal("30.00"))
+
     def test_manual_line_price_is_recorded(self):
         sale = self.create_sale()
         line = set_sale_line(

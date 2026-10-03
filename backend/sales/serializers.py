@@ -9,6 +9,27 @@ class CashRegisterSerializer(serializers.ModelSerializer):
 
 
 class CashSessionSerializer(serializers.ModelSerializer):
+    cash_payments_total = serializers.SerializerMethodField()
+    card_payments_total = serializers.SerializerMethodField()
+
+    def _payment_totals(self, session):
+        from django.db.models import Sum
+        if not hasattr(self, "_session_payment_totals"):
+            self._session_payment_totals = {}
+        if session.pk not in self._session_payment_totals:
+            self._session_payment_totals[session.pk] = dict(
+                SalePayment.objects.filter(sale__cash_session=session, sale__status=Sale.Status.CONFIRMED)
+                .order_by().values("method").annotate(total=Sum("amount"))
+                .values_list("method", "total")
+            )
+        return self._session_payment_totals[session.pk]
+
+    def get_cash_payments_total(self, session):
+        return str(self._payment_totals(session).get("CASH", Decimal("0.00")))
+
+    def get_card_payments_total(self, session):
+        return str(self._payment_totals(session).get("CARD", Decimal("0.00")))
+
     class Meta:
         model = CashSession; fields = "__all__"
         read_only_fields = ("id", "status", "opened_at", "opened_by", "closed_at", "closed_by", "expected_cash_amount", "counted_cash_amount", "cash_difference", "created_at", "updated_at")
