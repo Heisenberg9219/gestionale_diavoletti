@@ -230,6 +230,19 @@ class AzureInvoiceOcrTests(TestCase):
         self.assertEqual(analysis.status, DocumentOcrAnalysis.Status.FAILED)
         self.assertIn("non raggiungibile", analysis.error_message)
 
+    @patch("documents.services._analyze_with_azure", side_effect=RuntimeError("(InvalidRequest) InvalidContentLength: The input image is too large"))
+    def test_large_file_error_is_explained_in_italian(self, analyze):
+        analysis = analyze_invoice_attachment_with_azure(
+            attachment=self.attachment,
+            requested_by=self.user,
+        )
+
+        self.assertEqual(analysis.status, DocumentOcrAnalysis.Status.FAILED)
+        self.assertEqual(
+            analysis.error_message,
+            "OCR non eseguito: il PDF o l'immagine è troppo grande. Comprimi il file o carica una scansione a risoluzione più bassa, poi riprova.",
+        )
+
 
 class OcrPurchaseRegistrationTests(TestCase):
     def setUp(self):

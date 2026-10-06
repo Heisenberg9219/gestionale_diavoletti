@@ -1,3 +1,4 @@
+import logging
 import re
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
@@ -16,6 +17,46 @@ from .models import (
     DocumentStatusChange,
     DocumentType,
 )
+
+
+logger = logging.getLogger(__name__)
+
+
+def _ocr_error_message(exc):
+    """Convert provider errors into a clear message that can be shown to staff."""
+    raw = str(exc)
+    message = raw.lower()
+
+    if any(value in message for value in (
+        "invalidcontentlength", "content length", "input image is too large",
+        "file too large", "request entity too large", "payload too large",
+    )):
+        return "OCR non eseguito: il PDF o l'immagine è troppo grande. Comprimi il file o carica una scansione a risoluzione più bassa, poi riprova."
+    if any(value in message for value in (
+        "invalidimage", "invalid image", "corrupt", "malformed pdf",
+        "unsupported media type", "unsupported file", "invalidcontent",
+    )):
+        return "OCR non eseguito: il file non è leggibile o non è un PDF valido. Esporta di nuovo il documento in PDF e riprova."
+    if any(value in message for value in (
+        "authenticationfailed", "unauthorized", "forbidden", "invalid subscription key",
+        "access denied", "api key",
+    )):
+        return "OCR momentaneamente non disponibile: la configurazione del servizio non è valida. Contatta l'assistenza tecnica."
+    if any(value in message for value in (
+        "toomanyrequests", "quota", "rate limit", "429", "servicebusy",
+    )):
+        return "OCR momentaneamente occupato: è stato raggiunto il limite del servizio. Attendi qualche minuto e riprova."
+    if any(value in message for value in (
+        "timeout", "timed out", "connection", "non raggiungibile", "service unavailable", "503",
+    )):
+        return "OCR momentaneamente non raggiungibile. Verifica la connessione e riprova tra qualche minuto."
+    if "non ha riconosciuto una fattura" in message:
+        return "OCR completato, ma il documento non è stato riconosciuto come fattura. Controlla che il PDF sia la fattura corretta e leggibile."
+    if "richiede un file pdf" in message:
+        return "OCR non eseguito: per analizzare una fattura devi allegare un file PDF."
+    if "non è installato" in message or "configura azure_document_intelligence" in message:
+        return "OCR momentaneamente non disponibile: il servizio deve essere configurato dall'assistenza tecnica."
+    return "OCR non eseguito per un problema del servizio. Riprova tra qualche minuto; se il problema continua, contatta l'assistenza tecnica."
 
 
 def _decimal_string(value):
@@ -164,8 +205,9 @@ def analyze_invoice_attachment_with_azure(*, attachment, requested_by):
             "proposed_data", "provider_response", "status", "analyzed_at", "updated_at",
         ))
     except Exception as exc:
+        logger.exception("Errore durante l'analisi OCR della fattura")
         analysis.status = DocumentOcrAnalysis.Status.FAILED
-        analysis.error_message = str(exc)
+        analysis.error_message = _ocr_error_message(exc)
         analysis.analyzed_at = timezone.now()
         analysis.save(update_fields=(
             "status", "error_message", "analyzed_at", "updated_at",
