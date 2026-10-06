@@ -268,7 +268,8 @@
 .ocr-review-line input,
 .ocr-review-line select,
 .ocr-new-variant input,
-.ocr-new-variant select {
+.ocr-new-variant select,
+.ocr-item-details input {
   min-width: 0;
   box-sizing: border-box;
   width: 100%;
@@ -388,8 +389,15 @@
 }
 
 .ocr-review-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
-.ocr-item-details { grid-column: 2 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
-.ocr-item-details label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.ocr-item-details {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px);
+  gap: 6px;
+  padding: 0 26px 14px 93px;
+  color: #4d464c;
+  font-size: 12px;
+  font-weight: 800;
+}
 .ocr-conflicts { padding: 16px 24px; font-size: 13px; }
 .ocr-review-modal > .catalog-error { padding: 12px 24px; }
 
@@ -400,6 +408,7 @@
 .ocr-review-modal footer { justify-content: flex-end; }
 @media (max-width: 800px) {
   .ocr-review-modal footer span { flex-wrap: wrap; }
+  .ocr-item-details { padding: 0 16px 14px 46px; }
 }
 
 .ocr-proposal-history {
