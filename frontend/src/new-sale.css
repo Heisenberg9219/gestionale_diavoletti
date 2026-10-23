@@ -112,3 +112,13 @@
 .voucher-options button:hover,.voucher-options button:focus-visible{background:#fff0f2;outline:2px solid #ed001b;outline-offset:-2px}
 .voucher-options button span{color:#736b71;white-space:nowrap}
 .voucher-options p{margin:0;padding:10px;font-size:12px;color:#736b71}
+
+/* Sconto percentuale su riga */
+.receipt-line{flex-wrap:wrap}
+.receipt-line s{color:#a39ca1}
+.line-discount-badge{font-style:normal;font-weight:800;color:#167444}
+.quantity-control .line-discount-toggle.is-active{border-color:#167444;color:#167444;background:#edf9f1}
+.line-discount-editor{display:flex;flex-basis:100%;align-items:end;gap:8px}
+.line-discount-editor label{display:grid;flex:1;gap:4px;color:#4d464c;font-size:11px;font-weight:800}
+.line-discount-editor input{height:34px;box-sizing:border-box;border:1px solid #ded9db;border-radius:7px;padding:0 9px;font:inherit}
+.line-discount-editor .secondary-action{height:34px;padding:0 12px}

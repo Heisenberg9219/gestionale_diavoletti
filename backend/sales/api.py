@@ -15,7 +15,7 @@ from customers.models import Customer
 from giftlists.models import GiftListItem, ReservedStockSaleAuthorization
 from .models import CashRegister, CashSession, Sale, SaleLine, SalePayment
 from .serializers import CashRegisterSerializer, CashSessionSerializer, CloseCashSerializer, LineCommandSerializer, OpenCashSerializer, PaymentCommandSerializer, SaleLineSerializer, SalePaymentSerializer, SaleSerializer, TotalOverrideCommandSerializer
-from .services import add_sale_payment, close_cash_session, confirm_sale, get_open_sale_stock_warning, open_cash_session, set_sale_line, set_sale_total_override
+from .services import KEEP_DISCOUNT, add_sale_payment, close_cash_session, confirm_sale, get_open_sale_stock_warning, open_cash_session, set_sale_line, set_sale_total_override
 from .draft_services import remove_draft_line, remove_draft_payment, cancel_draft_sale
 from .serializers import DraftReasonSerializer, RemoveLineSerializer, RemovePaymentSerializer
 from api.factories import serializer_for
@@ -161,7 +161,7 @@ class SaleViewSet(viewsets.ModelViewSet):
         data = LineCommandSerializer(data=request.data); data.is_valid(raise_exception=True); values = data.validated_data
         authorization = values.get("reserved_stock_authorization")
         gift_list_item = values.get("gift_list_item")
-        line = set_sale_line(sale=self.get_object(), variant=get_object_or_404(ProductVariant, pk=values["variant"]), quantity=values["quantity"], manual_unit_price=values.get("manual_unit_price"), manual_override_reason=values.get("reason", ""), manual_override_by=request.user, reserved_stock_authorization=get_object_or_404(ReservedStockSaleAuthorization, pk=authorization) if authorization else None, gift_list_item=get_object_or_404(GiftListItem, pk=gift_list_item) if gift_list_item else None)
+        line = set_sale_line(sale=self.get_object(), variant=get_object_or_404(ProductVariant, pk=values["variant"]), quantity=values["quantity"], manual_unit_price=values.get("manual_unit_price"), manual_override_reason=values.get("reason", ""), manual_override_by=request.user, reserved_stock_authorization=get_object_or_404(ReservedStockSaleAuthorization, pk=authorization) if authorization else None, gift_list_item=get_object_or_404(GiftListItem, pk=gift_list_item) if gift_list_item else None, discount_percentage=values["discount_percentage"] if "discount_percentage" in values else KEEP_DISCOUNT)
         return Response(SaleLineSerializer(line).data)
     @action(detail=True, methods=("post",), url_path="add-with-gift-check")
     @transaction.atomic

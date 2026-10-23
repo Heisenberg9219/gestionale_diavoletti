@@ -1,11 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { Banknote, Barcode, CreditCard, Minus, Plus, Search, ShoppingCart, Trash2, X } from "lucide-react";
+import { Banknote, Barcode, CreditCard, Minus, Percent, Plus, Search, ShoppingCart, Trash2, X } from "lucide-react";
 import { request } from "../api";
 import "../new-sale.css";
 
 const euro = new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" });
 const list = (payload) => payload.results || payload || [];
 const decimal = (value) => Number(String(value).replace(",", "."));
+// Percentuale valida: maggiore di 0, al massimo 100, fino a due decimali.
+const parsePercentage = (value) => {
+  const text = String(value ?? "").trim();
+  if (!/^\d{1,3}(?:[.,]\d{1,2})?$/.test(text)) return null;
+  const number = decimal(text);
+  return number > 0 && number <= 100 ? number : null;
+};
+const formatPercentage = (value) => Number(value).toLocaleString("it-IT", { maximumFractionDigits: 2 });
 const paymentLabels = { CASH: "Contanti", CARD: "Carta", OTHER: "Altro", GIFT_CARD: "Gift card", STORE_CREDIT: "Buono reso" };
 
 export default function NewSalePage({ onNavigate }) {
@@ -28,6 +36,10 @@ export default function NewSalePage({ onNavigate }) {
   const [splitCard, setSplitCard] = useState("0.00");
   const [paymentAmount, setPaymentAmount] = useState("");
   const [roundedTotal, setRoundedTotal] = useState("");
+  const [totalDiscount, setTotalDiscount] = useState("");
+  const [lineDiscountEditing, setLineDiscountEditing] = useState(null);
+  const [lineDiscountValue, setLineDiscountValue] = useState("");
+  const [lineDiscountSaving, setLineDiscountSaving] = useState(false);
   const [cashReceived, setCashReceived] = useState("");
   const [paymentReference, setPaymentReference] = useState("");
   const [paymentError, setPaymentError] = useState("");
@@ -149,6 +161,25 @@ export default function NewSalePage({ onNavigate }) {
       setSale(await request(`/sales/sales/${sale.id}/`));
     } catch (err) { setMessage(err.message); }
   }
+  function openLineDiscount(line) {
+    setLineDiscountEditing(line.id);
+    setLineDiscountValue(line.manual_discount_percentage ? formatPercentage(line.manual_discount_percentage) : "");
+  }
+  async function saveLineDiscount(line, value) {
+    let percentage = null;
+    if (value !== null) {
+      percentage = parsePercentage(value);
+      if (percentage === null) return setMessage("Inserisci uno sconto tra 0,01% e 100%, con al massimo due decimali.");
+    }
+    setLineDiscountSaving(true);
+    try {
+      await request(`/sales/sales/${sale.id}/set-line/`, { method: "POST", body: JSON.stringify({ variant: line.variant, quantity: line.quantity, gift_list_item: line.gift_list_item || null, discount_percentage: percentage === null ? null : percentage.toFixed(2) }) });
+      setSale(await request(`/sales/sales/${sale.id}/`));
+      setLineDiscountEditing(null); setLineDiscountValue("");
+      setMessage(percentage === null ? "Sconto rimosso dall'articolo." : `Sconto del ${formatPercentage(percentage)}% applicato all'articolo.`);
+    } catch (err) { setMessage(`Impossibile applicare lo sconto: ${err.message}`); }
+    finally { setLineDiscountSaving(false); }
+  }
   async function removeLine(line) {
     try {
       await request(`/sales/sales/${sale.id}/remove-line/`, { method: "POST", body: JSON.stringify({ line: line.id, reason: "Articolo rimosso dal carrello" }) });
@@ -235,6 +266,7 @@ export default function NewSalePage({ onNavigate }) {
       const currentSale = await request(`/sales/sales/${sale.id}/`);
       const remaining = Math.max(0, paymentTotal(currentSale));
       setRoundedTotal(Number(currentSale.final_total_amount).toFixed(2));
+      setTotalDiscount("");
       setVoucherMessage("");
       setVoucherDropdown(false);
       setSplitPayment(false);
@@ -259,6 +291,23 @@ export default function NewSalePage({ onNavigate }) {
     } catch (error) { setVoucherMessage(`Impossibile applicare il buono: ${error.message}`); }
     finally { setPaying(false); }
   }
+  async function applyTotalDiscount() {
+    const percentage = parsePercentage(totalDiscount);
+    if (percentage === null) return setPaymentError("Inserisci uno sconto tra 0,01% e 100%, con al massimo due decimali.");
+    // Lo sconto si calcola sul totale degli articoli (già scontati riga per riga),
+    // poi il risultato si può ancora arrotondare.
+    const base = Math.round(Number(sale.calculated_total_amount || 0) * 100);
+    const discounted = Math.round(base * (100 - percentage) / 100) / 100;
+    setPaying(true); setPaymentError("");
+    try {
+      const updated = await request(`/sales/sales/${sale.id}/set-total/`, { method: "POST", body: JSON.stringify({ final_total_amount: discounted.toFixed(2), reason: `Sconto ${formatPercentage(percentage)}% sul totale` }) });
+      setSale(updated); setRoundedTotal(Number(updated.final_total_amount).toFixed(2));
+      const remaining = Math.max(0, paymentTotal(updated)).toFixed(2);
+      setPaymentAmount(remaining); setCashReceived(remaining);
+      setSplitCash(remaining); setSplitCard("0.00");
+    } catch (error) { setPaymentError(`Impossibile applicare lo sconto: ${error.message}`); }
+    finally { setPaying(false); }
+  }
   async function applyRounding() {
     const value = roundedTotal.trim();
     const total = Number(value.replace(",", "."));
@@ -267,7 +316,11 @@ export default function NewSalePage({ onNavigate }) {
     }
     setPaying(true); setPaymentError("");
     try {
-      const updated = await request(`/sales/sales/${sale.id}/set-total/`, { method: "POST", body: JSON.stringify({ final_total_amount: total.toFixed(2), reason: "Arrotondamento al pagamento" }) });
+      // Se è già stato applicato uno sconto % sul totale, la motivazione lo conserva.
+      const previous = sale.manual_override_reason || "";
+      const discountReason = previous.startsWith("Sconto") ? previous.replace(/ \+ arrotondamento$/, "") : "";
+      const reason = discountReason ? `${discountReason} + arrotondamento` : "Arrotondamento al pagamento";
+      const updated = await request(`/sales/sales/${sale.id}/set-total/`, { method: "POST", body: JSON.stringify({ final_total_amount: total.toFixed(2), reason }) });
       setSale(updated); setRoundedTotal(Number(updated.final_total_amount).toFixed(2));
       const remaining = Math.max(0, paymentTotal(updated)).toFixed(2);
       setPaymentAmount(remaining); setCashReceived(remaining);
@@ -408,7 +461,7 @@ export default function NewSalePage({ onNavigate }) {
 <div className="receipt-lines">{sale?.lines?.length ? sale.lines.map((line) => <div className="receipt-line" key={line.id}>
 <div>
 <strong>{labels[line.variant] || "Articolo aggiunto"}</strong>
-<span>{euro.format(Number(line.net_amount || 0))}</span>
+<span>{(() => { const lineTotal = Number(line.net_amount || 0) - Number(line.total_override_share || 0); return line.manual_discount_percentage ? <><s>{euro.format(Number(line.gross_amount || 0))}</s> {euro.format(lineTotal)} <em className="line-discount-badge">-{formatPercentage(line.manual_discount_percentage)}%</em></> : euro.format(lineTotal); })()}</span>
 </div>
 <div className="quantity-control">
 <button onClick={() => changeQuantity(line, -1)} aria-label="Diminuisci quantità">
@@ -418,10 +471,18 @@ export default function NewSalePage({ onNavigate }) {
 <button onClick={() => changeQuantity(line, 1)} aria-label="Aumenta quantità">
 <Plus size={15} />
 </button>
+<button className={line.manual_discount_percentage ? "line-discount-toggle is-active" : "line-discount-toggle"} onClick={() => lineDiscountEditing === line.id ? setLineDiscountEditing(null) : openLineDiscount(line)} aria-label="Sconto percentuale sull'articolo" title="Sconto %">
+<Percent size={14} />
+</button>
 <button className="remove-sale-line" onClick={() => removeLine(line)} aria-label="Rimuovi articolo">
 <Trash2 size={14} />
 </button>
 </div>
+{lineDiscountEditing === line.id && <form className="line-discount-editor" onSubmit={(event) => { event.preventDefault(); saveLineDiscount(line, lineDiscountValue); }}>
+<label>Sconto %<input autoFocus inputMode="decimal" value={lineDiscountValue} disabled={lineDiscountSaving} onChange={(event) => setLineDiscountValue(event.target.value)} placeholder="Es. 10" /></label>
+<button className="secondary-action" disabled={lineDiscountSaving}>Applica</button>
+{line.manual_discount_percentage && <button type="button" className="secondary-action" disabled={lineDiscountSaving} onClick={() => saveLineDiscount(line, null)}>Rimuovi</button>}
+</form>}
 </div>) : <p className="receipt-empty">Lo scontrino è pronto. Aggiungi il primo articolo.</p>}</div>
 <div className="receipt-total">
 <span>Totale</span>
@@ -472,9 +533,10 @@ export default function NewSalePage({ onNavigate }) {
 <div><span>Già pagato</span><strong>{euro.format((sale?.payments || []).reduce((sum, item) => sum + Number(item.amount), 0))}</strong></div>
 <div className="checkout-remaining"><span>Residuo da pagare</span><strong>{euro.format(Math.max(0, paymentTotal(sale)))}</strong></div>
 </div>
-{Number(sale?.manual_total_adjustment || 0) !== 0 && <p className="payment-change">Arrotondamento applicato: {Number(sale.manual_total_adjustment) > 0 ? "+" : ""}{euro.format(Number(sale.manual_total_adjustment))}</p>}
+{Number(sale?.manual_total_adjustment || 0) !== 0 && <p className="payment-change">{sale.manual_override_reason?.startsWith("Sconto") ? sale.manual_override_reason : "Arrotondamento applicato"}: {Number(sale.manual_total_adjustment) > 0 ? "+" : ""}{euro.format(Number(sale.manual_total_adjustment))}</p>}
 {Boolean(sale?.payments?.length) && <div className="checkout-payments"><h4>Pagamenti registrati</h4>{sale.payments.map((item) => <div key={item.id}><span>{paymentLabels[item.method] || item.method}{item.method === "CASH" && Number(item.cash_change_amount) > 0 && <small>Resto consegnato: {euro.format(Number(item.cash_change_amount))}</small>}</span><strong>{euro.format(Number(item.amount))}</strong><button type="button" className="secondary-action" disabled={paying} onClick={() => removePayment(item)}>Rimuovi</button></div>)}</div>}
-<details className="checkout-options"><summary>Arrotondamento e buoni</summary>
+<details className="checkout-options"><summary>Sconto, arrotondamento e buoni</summary>
+<div className="voucher-apply rounding-row"><label>Sconto sul totale %<input inputMode="decimal" value={totalDiscount} placeholder="Es. 10" disabled={paying || Boolean(sale?.payments?.length)} onChange={(event) => setTotalDiscount(event.target.value)} /></label><button type="button" className="secondary-action" disabled={paying || Boolean(sale?.payments?.length)} onClick={applyTotalDiscount}>Applica sconto</button><small>Calcolato su {euro.format(Number(sale?.calculated_total_amount || 0))}; poi puoi arrotondare il risultato.</small></div>
 <div className="voucher-apply rounding-row"><label>Totale arrotondato €<input inputMode="decimal" value={roundedTotal} disabled={paying || Boolean(sale?.payments?.length)} onChange={(event) => setRoundedTotal(event.target.value)} /></label><button type="button" className="secondary-action" disabled={paying || Boolean(sale?.payments?.length)} onClick={applyRounding}>Arrotonda</button><small>Disponibile prima di registrare pagamenti.</small></div>
 <div className="voucher-apply"><div className="voucher-picker" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setVoucherDropdown(false); }}>
 <label>Codice buono<input value={voucherCode} disabled={paying} role="combobox" aria-expanded={voucherDropdown} aria-controls="voucher-options" aria-autocomplete="list" autoComplete="off" onFocus={() => setVoucherDropdown(true)} onKeyDown={(event) => { if (event.key === "Escape") setVoucherDropdown(false); if (event.key === "ArrowDown") { event.preventDefault(); setVoucherDropdown(true); document.getElementById("voucher-options")?.querySelector("button")?.focus(); } }} onChange={(event) => { voucherRequest.current += 1; setVoucherOptions([]); setVoucherLoading(true); setVoucherDropdown(true); setVoucherCode(event.target.value); }} placeholder="Cerca o seleziona un buono" /></label>

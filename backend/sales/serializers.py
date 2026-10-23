@@ -77,6 +77,11 @@ class LineCommandSerializer(serializers.Serializer):
     reason = serializers.CharField(required=False, allow_blank=True)
     reserved_stock_authorization = serializers.UUIDField(required=False, allow_null=True)
     gift_list_item = serializers.UUIDField(required=False, allow_null=True)
+    # Sconto % sulla riga: null lo rimuove, se assente resta quello attuale.
+    discount_percentage = serializers.DecimalField(
+        max_digits=5, decimal_places=2, required=False, allow_null=True,
+        min_value=Decimal("0.01"), max_value=Decimal("100"),
+    )
 
 
 class TotalOverrideCommandSerializer(serializers.Serializer):

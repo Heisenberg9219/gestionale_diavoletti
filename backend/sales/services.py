@@ -123,6 +123,9 @@ def close_cash_session(
 
 MONEY_QUANTIZER = Decimal("0.01")
 
+# Valore speciale: "non indicato" (diverso da None, che rimuove lo sconto).
+KEEP_DISCOUNT = object()
+
 def _next_sale_number(*, occurred_at):
     year = occurred_at.year
 
@@ -240,6 +243,7 @@ def set_sale_line(
     manual_override_by=None,
     reserved_stock_authorization=None,
     gift_list_item=None,
+    discount_percentage=KEEP_DISCOUNT,
 ):
     sale = Sale.objects.select_for_update().get(pk=sale.pk)
 
@@ -310,6 +314,37 @@ def set_sale_line(
 
     base_unit_price = sale_price.amount
     final_unit_price = base_unit_price
+
+    existing_line = sale.lines.filter(variant=variant).first()
+    if discount_percentage is KEEP_DISCOUNT:
+        # Cambio di quantità o nuova scansione: lo sconto % della riga resta.
+        discount_percentage = (
+            existing_line.manual_discount_percentage
+            if existing_line is not None and manual_unit_price is None
+            else None
+        )
+    elif discount_percentage not in (None, ""):
+        if manual_unit_price is not None:
+            raise ValidationError(
+                "Indica il prezzo manuale oppure la percentuale di sconto, non entrambi."
+            )
+    if discount_percentage in (None, ""):
+        discount_percentage = None
+    else:
+        try:
+            discount_percentage = Decimal(str(discount_percentage)).quantize(
+                MONEY_QUANTIZER, rounding=ROUND_HALF_UP
+            )
+        except ArithmeticError as exc:
+            raise ValidationError("La percentuale di sconto non è valida.") from exc
+        if discount_percentage <= 0 or discount_percentage > 100:
+            raise ValidationError(
+                "La percentuale di sconto deve essere maggiore di 0 e al massimo 100."
+            )
+        manual_unit_price = _money(
+            base_unit_price * (Decimal("100") - discount_percentage) / Decimal("100")
+        )
+        manual_override_reason = f"Sconto {discount_percentage.normalize():f}% sulla riga"
 
     if manual_unit_price is not None:
         manual_unit_price = _money(
@@ -391,6 +426,7 @@ def set_sale_line(
     line.source_sale_price = sale_price
     line.base_unit_price = base_unit_price
     line.manual_unit_price = manual_unit_price
+    line.manual_discount_percentage = discount_percentage
     line.final_unit_price = final_unit_price
     line.gross_amount = gross_amount
     line.discount_amount = discount_amount

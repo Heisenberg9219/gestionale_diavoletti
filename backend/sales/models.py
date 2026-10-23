@@ -348,6 +348,15 @@ class SaleLine(UUIDTimeStampedModel):
         null=True,
         blank=True,
     )
+    # Sconto percentuale applicato alla riga (es. 10.00 = -10%).
+    # Il prezzo scontato è salvato in manual_unit_price; la percentuale serve
+    # a mantenere lo sconto quando cambia la quantità.
+    manual_discount_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
     final_unit_price = models.DecimalField(
         max_digits=10,
         decimal_places=2,
@@ -435,6 +444,16 @@ class SaleLine(UUIDTimeStampedModel):
                     | Q(manual_unit_price__gte=0)
                 ),
                 name="sales_line_manual_price_non_negative",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(manual_discount_percentage__isnull=True)
+                    | (
+                        Q(manual_discount_percentage__gt=0)
+                        & Q(manual_discount_percentage__lte=100)
+                    )
+                ),
+                name="sales_line_discount_percentage_valid",
             ),
             models.CheckConstraint(
                 condition=(
