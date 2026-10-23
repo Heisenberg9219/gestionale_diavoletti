@@ -1,6 +1,9 @@
 name: Build and deploy
 
 on:
+  # Ogni push su dev pubblica automaticamente l'ambiente di sviluppo.
+  push:
+    branches: [dev]
   workflow_dispatch:
     inputs:
       environment:
@@ -15,12 +18,20 @@ permissions:
   contents: read
 
 jobs:
-  deploy:
+  tests:
     if: >-
+      (github.event_name == 'push' && github.ref_name == 'dev') ||
       (inputs.environment == 'development' && github.ref_name == 'dev') ||
       (inputs.environment == 'production' && github.ref_name == 'prod')
+    uses: ./.github/workflows/tests.yml
+
+  deploy:
+    needs: tests
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    environment: ${{ inputs.environment || 'development' }}
+    concurrency:
+      group: deploy-${{ inputs.environment || 'development' }}
+      cancel-in-progress: false
     env:
       DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
       DEPLOY_USER: ${{ vars.DEPLOY_USER }}
@@ -43,7 +54,7 @@ jobs:
     steps:
       - name: Verifica il branch scelto
         run: |
-          echo "Deploy manuale di $GITHUB_REF_NAME su ${{ inputs.environment }}"
+          echo "Deploy di $GITHUB_REF_NAME su ${{ inputs.environment || 'development' }} ($GITHUB_EVENT_NAME)"
 
       - name: Configura l'accesso SSH
         run: |
@@ -52,29 +63,61 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
 
+      - name: Prepara il file .env
+        # I valori vengono scritti tra apici singoli (letti alla lettera da
+        # Docker Compose) e trasferiti in base64: caratteri come $ ` \ nei
+        # secret non vengono più interpretati dalla shell remota.
+        run: |
+          set -eu
+          umask 077
+          : > deploy.env
+          for name in POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD POSTGRES_HOST POSTGRES_PORT \
+                      DJANGO_SECRET_KEY DJANGO_DEBUG DJANGO_ALLOWED_HOSTS DJANGO_COOKIE_SECURE \
+                      APP_DOMAIN AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT AZURE_DOCUMENT_INTELLIGENCE_KEY; do
+            value="${!name}"
+            case "$value" in
+              *"'"*) echo "::error::$name contiene un apice singolo: rigenera il valore."; exit 1 ;;
+              '$'*) echo "::error::$name non può iniziare con \$: rigenera il valore."; exit 1 ;;
+            esac
+            if [ "$(printf '%s' "$value" | wc -l)" -ne 0 ]; then
+              echo "::error::$name non può contenere a capo."; exit 1
+            fi
+            printf "%s='%s'\n" "$name" "$value" >> deploy.env
+          done
+          echo "ENV_B64=$(base64 -w0 deploy.env)" >> "$GITHUB_ENV"
+          rm -f deploy.env
+
       - name: Aggiorna e pubblica sul server
         run: |
-          cat <<REMOTE | ssh -o PubkeyAuthentication=unbound -o IdentitiesOnly=yes "$DEPLOY_USER@$DEPLOY_HOST" bash -se
+          ssh -o PubkeyAuthentication=unbound -o IdentitiesOnly=yes "$DEPLOY_USER@$DEPLOY_HOST" \
+            bash -s -- "$DEPLOY_PATH" "$GITHUB_REF_NAME" "$ENV_B64" <<'REMOTE'
           set -eu
+          DEPLOY_PATH="$1"; BRANCH="$2"; ENV_B64="$3"
           cd "$DEPLOY_PATH"
-          git fetch origin "$GITHUB_REF_NAME"
-          git checkout -B "$GITHUB_REF_NAME" "origin/$GITHUB_REF_NAME"
+          git fetch origin "$BRANCH"
+          git checkout -B "$BRANCH" "origin/$BRANCH"
           umask 077
-          cat > .env <<ENVIRONMENT
-          POSTGRES_DB=$POSTGRES_DB
-          POSTGRES_USER=$POSTGRES_USER
-          POSTGRES_PASSWORD=$POSTGRES_PASSWORD
-          POSTGRES_HOST=$POSTGRES_HOST
-          POSTGRES_PORT=$POSTGRES_PORT
-          DJANGO_SECRET_KEY=$DJANGO_SECRET_KEY
-          DJANGO_DEBUG=$DJANGO_DEBUG
-          DJANGO_ALLOWED_HOSTS=$DJANGO_ALLOWED_HOSTS
-          DJANGO_COOKIE_SECURE=$DJANGO_COOKIE_SECURE
-          APP_DOMAIN=$APP_DOMAIN
-          AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT=$AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT
-          AZURE_DOCUMENT_INTELLIGENCE_KEY=$AZURE_DOCUMENT_INTELLIGENCE_KEY
-          ENVIRONMENT
-          docker compose --env-file .env -f infrastructure/compose.server.yml up -d --build
-          docker compose --env-file .env -f infrastructure/compose.server.yml exec -T backend python manage.py migrate
-          docker compose --env-file .env -f infrastructure/compose.server.yml exec -T backend python manage.py collectstatic --noinput
+          printf '%s' "$ENV_B64" | base64 -d > .env
+
+          COMPOSE="docker compose --env-file .env -f infrastructure/compose.server.yml"
+
+          # 1. Backup prima di toccare il database (se è già in esecuzione).
+          if [ -n "$($COMPOSE ps -q db 2>/dev/null)" ]; then
+            COMPOSE_FILE="$DEPLOY_PATH/infrastructure/compose.server.yml" \
+            COMPOSE_ENV_FILE="$DEPLOY_PATH/.env" \
+              python3 infrastructure/scripts/backup_postgres.py
+          fi
+
+          # 2. Build delle nuove immagini: i container attuali restano attivi.
+          $COMPOSE build
+
+          # 3. Migrazioni e file statici con un container temporaneo.
+          #    Se falliscono il deploy si ferma e resta in linea la versione precedente.
+          $COMPOSE up -d --wait db
+          $COMPOSE run --rm --no-deps backend python manage.py migrate --noinput
+          $COMPOSE run --rm --no-deps backend python manage.py collectstatic --noinput
+
+          # 4. Avvio della nuova versione.
+          $COMPOSE up -d --remove-orphans
+          $COMPOSE ps
           REMOTE
