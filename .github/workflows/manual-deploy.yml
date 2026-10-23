@@ -88,36 +88,56 @@ jobs:
           rm -f deploy.env
 
       - name: Aggiorna e pubblica sul server
+        # Lo script remoto viene caricato come file e poi eseguito: se fosse
+        # passato su stdin, comandi come "docker compose exec -T" leggerebbero
+        # (e farebbero sparire) il resto dello script, chiudendo il deploy a metà
+        # senza errori.
         run: |
-          ssh -o PubkeyAuthentication=unbound -o IdentitiesOnly=yes "$DEPLOY_USER@$DEPLOY_HOST" \
-            bash -s -- "$DEPLOY_PATH" "$GITHUB_REF_NAME" "$ENV_B64" <<'REMOTE'
           set -eu
+          cat > deploy-remote.sh <<'REMOTE'
+          set -eu
+          exec < /dev/null
           DEPLOY_PATH="$1"; BRANCH="$2"; ENV_B64="$3"
           cd "$DEPLOY_PATH"
           git fetch origin "$BRANCH"
           git checkout -B "$BRANCH" "origin/$BRANCH"
+          echo "Versione: $(git log --oneline -1)"
           umask 077
           printf '%s' "$ENV_B64" | base64 -d > .env
 
           COMPOSE="docker compose --env-file .env -f infrastructure/compose.server.yml"
 
-          # 1. Backup prima di toccare il database (se è già in esecuzione).
+          echo "== 1. Backup prima di toccare il database"
           if [ -n "$($COMPOSE ps -q db 2>/dev/null)" ]; then
             COMPOSE_FILE="$DEPLOY_PATH/infrastructure/compose.server.yml" \
             COMPOSE_ENV_FILE="$DEPLOY_PATH/.env" \
               python3 infrastructure/scripts/backup_postgres.py
+          else
+            echo "Database non ancora avviato: backup saltato."
           fi
 
-          # 2. Build delle nuove immagini: i container attuali restano attivi.
+          echo "== 2. Build delle nuove immagini (la versione attuale resta in linea)"
           $COMPOSE build
 
-          # 3. Migrazioni e file statici con un container temporaneo.
-          #    Se falliscono il deploy si ferma e resta in linea la versione precedente.
+          echo "== 3. Migrazioni e file statici"
           $COMPOSE up -d --wait db
-          $COMPOSE run --rm --no-deps backend python manage.py migrate --noinput
-          $COMPOSE run --rm --no-deps backend python manage.py collectstatic --noinput
+          $COMPOSE run --rm --no-deps -T backend python manage.py migrate --noinput
+          $COMPOSE run --rm --no-deps -T backend python manage.py collectstatic --noinput
 
-          # 4. Avvio della nuova versione.
+          echo "== 4. Avvio della nuova versione"
           $COMPOSE up -d --remove-orphans
+
+          echo "== 5. Verifica"
+          if $COMPOSE exec -T backend python manage.py showmigrations --plan | grep -q '\[ \]'; then
+            echo "ERRORE: ci sono migrazioni non applicate." >&2
+            exit 1
+          fi
           $COMPOSE ps
+          echo "Deploy completato."
           REMOTE
+
+          SSH="ssh -o PubkeyAuthentication=unbound -o IdentitiesOnly=yes $DEPLOY_USER@$DEPLOY_HOST"
+          REMOTE_FILE=$($SSH -n 'mktemp /tmp/diavoletti-deploy.XXXXXX')
+          $SSH "cat > '$REMOTE_FILE'" < deploy-remote.sh
+          rm -f deploy-remote.sh
+          $SSH -n "bash '$REMOTE_FILE' '$DEPLOY_PATH' '$GITHUB_REF_NAME' '$ENV_B64'; status=\$?; rm -f '$REMOTE_FILE'; exit \$status"
