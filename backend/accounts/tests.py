@@ -26,6 +26,8 @@ class AuthenticationApiTests(TestCase):
         )
 
     def setUp(self):
+        from django.core.cache import cache
+        cache.clear()  # azzera i contatori di throttling tra un test e l'altro
         self.client = APIClient()
 
     def login(self):

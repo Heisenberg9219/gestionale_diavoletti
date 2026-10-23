@@ -1,4 +1,6 @@
 from rest_framework import serializers
+
+from api.visibility import OwnerOnlyFieldsMixin
 from .models import InventoryCountLine, InventoryCountSession, StockBalance, StockMovement, VariantInventoryCost
 
 
@@ -25,7 +27,8 @@ class VariantInventoryCostSerializer(ReadOnlyModelSerializer):
         model = VariantInventoryCost; fields = "__all__"
 
 
-class StockMovementSerializer(ReadOnlyModelSerializer):
+class StockMovementSerializer(OwnerOnlyFieldsMixin, ReadOnlyModelSerializer):
+    owner_only_fields = ("unit_cost",)
     variant_sku = serializers.CharField(source="variant.sku", read_only=True)
     location_name = serializers.CharField(source="location.name", read_only=True)
     movement_type_label = serializers.CharField(source="get_movement_type_display", read_only=True)

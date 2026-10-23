@@ -73,6 +73,8 @@ def issue_voucher(
     source_id=None,
     notifications_enabled=False,
     notes="",
+    payment_method="",
+    cash_session=None,
 ):
     if voucher_type not in {choice.value for choice in Voucher.Type}:
         raise ValidationError("Il tipo di buono non è valido.")
@@ -92,6 +94,17 @@ def issue_voucher(
         holder_first_name = customer.first_name
         holder_last_name = customer.last_name
 
+    payment_method = (payment_method or "").strip().upper()
+    if payment_method and payment_method not in {"CASH", "CARD", "OTHER"}:
+        raise ValidationError("Il metodo di pagamento non è valido.")
+    if payment_method and voucher_type != Voucher.Type.GIFT_CARD:
+        raise ValidationError("Il pagamento si registra solo per i buoni regalo venduti.")
+    if payment_method == "CASH":
+        from sales.services import resolve_cash_session_for_cash_income
+        cash_session = resolve_cash_session_for_cash_income(cash_session=cash_session)
+    else:
+        cash_session = None
+
     voucher = Voucher(
         code=(code or _new_code(voucher_type)).strip().upper(),
         voucher_type=voucher_type,
@@ -107,6 +120,8 @@ def issue_voucher(
         notifications_enabled=notifications_enabled,
         issued_by=issued_by,
         notes=notes,
+        payment_method=payment_method,
+        cash_session=cash_session,
     )
     voucher.full_clean()
     voucher.save()
@@ -201,8 +216,10 @@ def redeem_voucher(
     expired_authorization=None,
     occurred_at=None,
 ):
-    voucher = Voucher.objects.select_for_update().get(pk=voucher.pk)
+    # Ordine dei lock coerente con le altre operazioni (prima vendita, poi
+    # buono) per evitare deadlock tra casse che lavorano in parallelo.
     sale = Sale.objects.select_for_update().get(pk=sale.pk)
+    voucher = Voucher.objects.select_for_update().get(pk=voucher.pk)
     occurred_at = occurred_at or timezone.now()
 
     if sale.status != Sale.Status.OPEN:

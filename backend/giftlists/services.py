@@ -186,7 +186,7 @@ def add_gift_list_items(*, gift_list, items, added_by):
 @transaction.atomic
 def add_contribution(
     *, gift_list, first_name, last_name, amount, payment_method,
-    recorded_by, occurred_at=None, notes=""
+    recorded_by, occurred_at=None, notes="", cash_session=None
 ):
     gift_list = GiftList.objects.select_for_update().get(pk=gift_list.pk)
     if gift_list.status != GiftList.Status.OPEN:
@@ -212,6 +212,12 @@ def add_contribution(
         recorded_by=recorded_by,
         notes=notes.strip(),
     )
+    if payment_method == GiftListContribution.PaymentMethod.CASH:
+        # Il contante entra nel cassetto: va conteggiato alla chiusura cassa.
+        from sales.services import resolve_cash_session_for_cash_income
+        contribution.cash_session = resolve_cash_session_for_cash_income(
+            location=gift_list.location, cash_session=cash_session,
+        )
     contribution.full_clean()
     contribution.save()
     return contribution

@@ -7,6 +7,7 @@ from django.db.models import F, Q
 from django.utils import timezone
 
 from core.models import UUIDTimeStampedModel
+from core.uploads import RandomUploadPath, validate_uploaded_file
 
 
 class DocumentType(UUIDTimeStampedModel):
@@ -172,7 +173,10 @@ class DocumentAttachment(UUIDTimeStampedModel):
         on_delete=models.PROTECT,
         related_name="attachments",
     )
-    file = models.FileField(upload_to="documents/%Y/%m/")
+    file = models.FileField(
+        upload_to=RandomUploadPath("documents"),
+        validators=[validate_uploaded_file],
+    )
     original_name = models.CharField(max_length=255)
     description = models.CharField(max_length=255, blank=True)
     uploaded_by = models.ForeignKey(

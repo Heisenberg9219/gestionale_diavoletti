@@ -55,6 +55,19 @@ class Voucher(UUIDTimeStampedModel):
     cancellation_reason = models.CharField(max_length=255, blank=True)
     notes = models.TextField(blank=True)
     notifications_enabled = models.BooleanField(default=False)
+    # Incasso della vendita del buono (vuoto per buoni da reso o da lista).
+    payment_method = models.CharField(
+        max_length=16,
+        blank=True,
+        choices=(("CASH", "Contanti"), ("CARD", "Carta"), ("OTHER", "Altro")),
+    )
+    cash_session = models.ForeignKey(
+        "sales.CashSession",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="sold_vouchers",
+    )
 
     class Meta:
         ordering = ("-issued_at",)

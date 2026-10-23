@@ -1,6 +1,9 @@
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1";
 
 let accessToken = sessionStorage.getItem("accessToken");
+// Un solo rinnovo di sessione alla volta: le richieste parallele attendono lo
+// stesso esito invece di usare due volte il refresh token (che viene ruotato).
+let refreshInFlight = null;
 
 function clearLocalSession() {
   accessToken = null;
@@ -12,10 +15,11 @@ function notifySessionExpired() {
   window.dispatchEvent(new Event("auth:expired"));
 }
 
-export async function refreshSession() {
+async function performRefresh() {
   const refreshed = await fetch(`${API_URL}/auth/refresh/`, { method: "POST", credentials: "include" });
   if (!refreshed.ok) {
-    notifySessionExpired();
+    // 429 = troppi rinnovi ravvicinati: non è una sessione scaduta.
+    if (refreshed.status !== 429) notifySessionExpired();
     return false;
   }
   accessToken = (await refreshed.json()).access;
@@ -23,17 +27,35 @@ export async function refreshSession() {
   return true;
 }
 
-export async function request(path, options = {}) {
-  const headers = new Headers(options.headers);
-  if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
-  if (options.body && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
-  let response = await fetch(`${API_URL}${path}`, { ...options, headers, credentials: "include" });
-  if (response.status === 401 && path !== "/auth/refresh/") {
-    if (await refreshSession()) {
-      headers.set("Authorization", `Bearer ${accessToken}`);
-      response = await fetch(`${API_URL}${path}`, { ...options, headers, credentials: "include" });
-    }
+export function refreshSession() {
+  if (!refreshInFlight) {
+    refreshInFlight = performRefresh()
+      .catch(() => false)
+      .finally(() => { refreshInFlight = null; });
   }
+  return refreshInFlight;
+}
+
+async function authorizedFetch(path, options = {}) {
+  const headers = new Headers(options.headers);
+  if (options.body && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
+  const send = () => {
+    if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
+    else headers.delete("Authorization");
+    return fetch(`${API_URL}${path}`, { ...options, headers, credentials: "include" });
+  };
+  const tokenUsed = accessToken;
+  let response = await send();
+  if (response.status === 401 && path !== "/auth/refresh/" && path !== "/auth/login/") {
+    // Se un'altra richiesta ha già rinnovato il token, basta riprovare.
+    const renewed = accessToken && accessToken !== tokenUsed ? true : await refreshSession();
+    if (renewed) response = await send();
+  }
+  return response;
+}
+
+export async function request(path, options = {}) {
+  const response = await authorizedFetch(path, options);
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     const details = body.error?.details;
@@ -62,10 +84,7 @@ export async function logout() {
 }
 
 export async function downloadFile(path, filename, options = {}) {
-  const headers = new Headers(options.headers);
-  if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
-  if (options.body && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
-  const response = await fetch(`${API_URL}${path}`, { ...options, headers, credentials: "include" });
+  const response = await authorizedFetch(path, options);
   if (!response.ok) throw new Error("Non è stato possibile preparare il file CSV.");
   const url = URL.createObjectURL(await response.blob());
   const link = document.createElement("a");
@@ -75,4 +94,21 @@ export async function downloadFile(path, filename, options = {}) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+// Apre in una nuova scheda un allegato protetto (es. PDF fattura).
+// La scheda viene aperta subito per non essere bloccata dal browser.
+export async function openProtectedFile(path) {
+  const preview = window.open("", "_blank");
+  try {
+    const response = await authorizedFetch(path);
+    if (!response.ok) throw new Error("Non è stato possibile aprire il file.");
+    const url = URL.createObjectURL(await response.blob());
+    if (preview) preview.location.href = url;
+    else window.location.assign(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (error) {
+    if (preview) preview.close();
+    throw error;
+  }
 }

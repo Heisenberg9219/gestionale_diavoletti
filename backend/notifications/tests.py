@@ -154,6 +154,7 @@ class NotificationServiceTests(TestCase):
             tax_amount="22.00",
             total_amount="122.00",
             status=Expense.Status.OPEN,
+            notifications_enabled=True,
             created_by=self.owner,
         )
 
@@ -175,6 +176,7 @@ class NotificationServiceTests(TestCase):
             tax_amount="2.20",
             total_amount="12.20",
             status=Expense.Status.OPEN,
+            notifications_enabled=True,
             created_by=self.owner,
         )
         notification = generate_expense_due_notifications(
@@ -190,6 +192,7 @@ class NotificationServiceTests(TestCase):
             issued_by=self.owner,
             issued_at=now - timedelta(days=30),
             expires_at=now + timedelta(days=3),
+            notifications_enabled=True,
         )
         issue_voucher(
             voucher_type=Voucher.Type.GIFT_CARD,

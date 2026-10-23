@@ -184,6 +184,14 @@ class GiftListContribution(UUIDTimeStampedModel):
         related_name="recorded_gift_list_contributions",
     )
     notes = models.CharField(max_length=255, blank=True)
+    # Sessione di cassa in cui è entrato il contante (solo pagamenti CASH).
+    cash_session = models.ForeignKey(
+        "sales.CashSession",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="gift_list_contributions",
+    )
 
     class Meta:
         ordering = ("occurred_at", "created_at")

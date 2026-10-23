@@ -20,6 +20,10 @@ env.read_env(BASE_DIR.parent / ".env")
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+# Gli allegati non sono pubblici: vengono scaricati da viste autenticate.
+# In produzione nginx li invia tramite X-Accel-Redirect da una location "internal".
+MEDIA_USE_X_ACCEL_REDIRECT = env.bool("MEDIA_USE_X_ACCEL_REDIRECT", default=False)
+MEDIA_X_ACCEL_PREFIX = "/protected-media/"
 
 AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT = env(
     "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT",
@@ -179,6 +183,13 @@ REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "api.pagination.DefaultPagination",
     "PAGE_SIZE": 50,
     "EXCEPTION_HANDLER": "api.exceptions.api_exception_handler",
+    # Numero di reverse proxy davanti a Django (nginx = 1): serve al throttling
+    # per riconoscere l'IP reale del client da X-Forwarded-For.
+    "NUM_PROXIES": env.int("DJANGO_NUM_PROXIES", default=0) or None,
+    "DEFAULT_THROTTLE_RATES": {
+        "login": env("DJANGO_LOGIN_THROTTLE_RATE", default="10/min"),
+        "auth_refresh": env("DJANGO_REFRESH_THROTTLE_RATE", default="120/min"),
+    },
 }
 
 SPECTACULAR_SETTINGS = {
@@ -201,6 +212,21 @@ CORS_ALLOWED_ORIGINS = env.list(
     default=["http://localhost:5173", "http://127.0.0.1:5173"],
 )
 CORS_ALLOW_CREDENTIALS = True
+
+# Sicurezza dietro reverse proxy (nginx termina HTTPS e inoltra X-Forwarded-Proto).
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+APP_DOMAIN = env("APP_DOMAIN", default="")
+CSRF_TRUSTED_ORIGINS = env.list(
+    "DJANGO_CSRF_TRUSTED_ORIGINS",
+    default=[f"https://{APP_DOMAIN}"] if APP_DOMAIN and APP_DOMAIN != "localhost" else [],
+)
+SESSION_COOKIE_SECURE = env.bool("DJANGO_COOKIE_SECURE", default=not DEBUG)
+CSRF_COOKIE_SECURE = SESSION_COOKIE_SECURE
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = "DENY"
+SECURE_REFERRER_POLICY = "same-origin"
+# HSTS è opzionale: attivarlo solo quando HTTPS è stabile (es. 31536000).
+SECURE_HSTS_SECONDS = env.int("DJANGO_HSTS_SECONDS", default=0)
 
 AUTH_REFRESH_COOKIE_NAME = "diavoletti_refresh"
 AUTH_REFRESH_COOKIE_SECURE = env.bool("DJANGO_COOKIE_SECURE", default=not DEBUG)

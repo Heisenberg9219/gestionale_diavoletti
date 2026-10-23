@@ -2,7 +2,7 @@
 
 ## Backup PostgreSQL
 
-Lo script `infrastructure/scripts/backup_postgres.py` crea un dump PostgreSQL in formato custom e conserva gli ultimi sette file. I dump sono archiviati in `infrastructure/backups/`, esclusa da Git.
+Lo script `infrastructure/scripts/backup_postgres.py` crea un dump PostgreSQL in formato custom e un archivio `diavoletti-media-*.tar.gz` con gli allegati caricati (fatture, ricevute), conservando gli ultimi sette di ciascun tipo. Per saltare gli allegati impostare `BACKUP_MEDIA=false`. Il deploy esegue automaticamente un backup prima di applicare le migrazioni. I dump sono archiviati in `infrastructure/backups/`, esclusa da Git.
 
 Sul server, eseguire il processo con l'utente `deploy`, autorizzato a usare Docker. Dopo il primo deploy creare la directory dei log e aggiungere al crontab:
 
@@ -45,3 +45,22 @@ La pipeline scrive entrambi i valori nel file `.env` del server durante il deplo
 Per il gestionale iniziale usare un VPS europeo con Ubuntu 24.04 LTS, Docker e almeno 4 vCPU, 8 GB di RAM e 80 GB NVMe. Questa configurazione ospita PostgreSQL, backend, frontend, reverse proxy, Redis e il processo programmato delle notifiche senza sovradimensionare l'infrastruttura.
 
 Non esporre PostgreSQL su Internet. Esporre esclusivamente HTTPS tramite reverse proxy, mantenere firewall attivo e attivare gli aggiornamenti di sicurezza. Aggiungere una copia cifrata dei backup su uno storage esterno prima dell'apertura al pubblico.
+
+## Deploy
+
+Il workflow `Build and deploy` esegue prima i test (`.github/workflows/tests.yml`), poi sul server:
+
+1. backup di database e allegati (se il database è già attivo);
+2. build delle nuove immagini, con la versione precedente ancora in linea;
+3. `migrate` e `collectstatic` in container temporanei: se falliscono il deploy si interrompe e resta attiva la versione precedente;
+4. avvio della nuova versione.
+
+I valori di variabili e secret non possono contenere apici singoli, a capo o iniziare con `$`: il workflow si ferma con un messaggio esplicito.
+
+## Allegati protetti
+
+Fatture e ricevute non sono più raggiungibili all'indirizzo pubblico `/media/`. Si scaricano da `/api/v1/documents/attachments/<id>/download/` e `/api/v1/expenses/attachments/<id>/download/`, che verificano l'utente; in produzione nginx invia il file tramite `X-Accel-Redirect` dalla location interna `/protected-media/`. Sono accettati solo PDF, JPG e PNG fino a 20 MB, salvati con nome casuale.
+
+## Sicurezza HTTPS
+
+Django riconosce HTTPS tramite l'header `X-Forwarded-Proto` impostato da nginx e accetta il login dell'admin dall'origine `https://APP_DOMAIN`. HSTS è disattivato per default: quando il certificato e il rinnovo automatico sono stabili, impostare `DJANGO_HSTS_SECONDS=31536000` (aggiungendo la variabile al file `.env` generato dal workflow di deploy).

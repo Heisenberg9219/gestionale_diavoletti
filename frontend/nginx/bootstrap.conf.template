@@ -4,6 +4,11 @@ server {
     root /usr/share/nginx/html;
 
     client_max_body_size 25m;
+    server_tokens off;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "same-origin" always;
 
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
@@ -31,10 +36,15 @@ server {
         expires 7d;
     }
 
-    location /media/ {
+    # Gli allegati non sono pubblici: Django verifica l'utente e poi
+    # delega l'invio a questa location tramite X-Accel-Redirect.
+    location /protected-media/ {
+        internal;
         alias /var/www/media/;
-        access_log off;
-        expires 1d;
+    }
+
+    location /media/ {
+        return 404;
     }
 
     location / {

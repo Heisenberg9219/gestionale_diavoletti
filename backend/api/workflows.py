@@ -194,7 +194,10 @@ def voucher_viewset(base):
         if customer_id not in (None, ""):
             customer_id = serializers.UUIDField().run_validation(customer_id)
             customer = get_object_or_404(Customer, pk=customer_id, is_active=True)
-        obj=issue_voucher(customer=customer, voucher_type=required(request.data,"voucher_type"), initial_amount=required(request.data,"initial_amount"), issued_by=request.user, code=request.data.get("code"), expires_at=moment(request.data,"expires_at"), holder_first_name=request.data.get("holder_first_name",""), holder_last_name=request.data.get("holder_last_name",""), source_type=request.data.get("source_type",""), source_id=request.data.get("source_id"), notifications_enabled=request.data.get("notifications_enabled",False), notes=request.data.get("notes",""))
+        from sales.models import CashSession
+        cash_session_id = request.data.get("cash_session")
+        cash_session = get_object_or_404(CashSession, pk=serializers.UUIDField().run_validation(cash_session_id)) if cash_session_id else None
+        obj=issue_voucher(payment_method=request.data.get("payment_method") or "", cash_session=cash_session, customer=customer, voucher_type=required(request.data,"voucher_type"), initial_amount=required(request.data,"initial_amount"), issued_by=request.user, code=request.data.get("code"), expires_at=moment(request.data,"expires_at"), holder_first_name=request.data.get("holder_first_name",""), holder_last_name=request.data.get("holder_last_name",""), source_type=request.data.get("source_type",""), source_id=request.data.get("source_id"), notifications_enabled=request.data.get("notifications_enabled",False), notes=request.data.get("notes",""))
         return Response(self.get_serializer(obj).data,status=201)
     @action(detail=True, methods=("get",))
     def balance(self,request,pk=None): return Response({"balance":get_voucher_ledger_balance(voucher=self.get_object())})
@@ -233,7 +236,10 @@ def gift_list_viewset(base):
         return Response(serializer_for(type(obj))(obj).data,status=201)
     @action(detail=True, methods=("post",), url_path="add-contribution")
     def contribution(self,request,pk=None):
-        obj=add_contribution(gift_list=self.get_object(),first_name=required(request.data,"first_name"),last_name=required(request.data,"last_name"),amount=required(request.data,"amount"),payment_method=required(request.data,"payment_method"),recorded_by=request.user,occurred_at=moment(request.data,"occurred_at"),notes=request.data.get("notes",""))
+        from sales.models import CashSession
+        cash_session_id = request.data.get("cash_session")
+        cash_session = get_object_or_404(CashSession, pk=serializers.UUIDField().run_validation(cash_session_id)) if cash_session_id else None
+        obj=add_contribution(gift_list=self.get_object(),first_name=required(request.data,"first_name"),last_name=required(request.data,"last_name"),amount=required(request.data,"amount"),payment_method=required(request.data,"payment_method"),recorded_by=request.user,occurred_at=moment(request.data,"occurred_at"),notes=request.data.get("notes",""),cash_session=cash_session)
         from .factories import serializer_for
         return Response(serializer_for(type(obj))(obj).data,status=201)
     @action(detail=True, methods=("post",), url_path="authorize-stock")
@@ -356,9 +362,16 @@ def document_viewset(base):
         return Response({"cancelled": len(documents)})
     @action(detail=True, methods=("post",), url_path="upload-attachment", parser_classes=(MultiPartParser, FormParser))
     def upload_attachment(self, request, pk=None):
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from core.uploads import validate_uploaded_file
+
         uploaded_file = request.FILES.get("file")
         if uploaded_file is None:
             raise ValidationError({"file": "Allega un file PDF."})
+        try:
+            validate_uploaded_file(uploaded_file)
+        except DjangoValidationError as exc:
+            raise ValidationError({"file": exc.messages}) from exc
         attachment = DocumentAttachment.objects.create(
             document=self.get_object(),
             file=uploaded_file,
@@ -374,23 +387,21 @@ def document_viewset(base):
 
 def document_attachment_viewset(base):
     from core.models import Location
-    from documents.services import analyze_invoice_attachment_with_azure, import_ocr_review_to_inventory, save_ocr_review, validate_ocr_review
+    from documents.services import import_ocr_review_to_inventory, save_ocr_review, start_invoice_analysis, validate_ocr_review
     from documents.models import DocumentOcrAnalysis
     from suppliers.models import Supplier
 
     @action(detail=True, methods=("post",), url_path="analyze-invoice")
     def analyze_invoice(self, request, pk=None):
-        analysis = analyze_invoice_attachment_with_azure(
+        """Avvia l'OCR in background: risponde subito con l'analisi in attesa (202)."""
+        analysis = start_invoice_analysis(
             attachment=self.get_object(),
             requested_by=request.user,
         )
         from .factories import serializer_for
-        if analysis.status != "SUCCEEDED":
-            return Response(
-                {"detail": analysis.error_message or "L'analisi OCR non è stata completata."},
-                status=422,
-            )
-        return Response(serializer_for(type(analysis))(analysis).data, status=201)
+        data = serializer_for(type(analysis))(analysis).data
+        data.pop("provider_response", None)
+        return Response(data, status=202)
 
     @action(detail=True, methods=("post",), url_path="import-to-inventory")
     def import_to_inventory(self, request, pk=None):
@@ -420,8 +431,28 @@ def document_attachment_viewset(base):
         errors = validate_ocr_review(review)
         return Response({"conflicts": errors, "issues": getattr(errors, "issues", [{"row": None, "kind": "incomplete", "message": message} for message in errors])})
 
+    @action(detail=True, methods=("get",))
+    def download(self, request, pk=None):
+        """Scarica l'allegato solo dopo i controlli di autenticazione e permesso."""
+        from core.uploads import protected_file_response
+        attachment = self.get_object()
+        return protected_file_response(attachment.file, attachment.original_name)
+
     base.save_review = save_review; base.validate_review = validate_review
     base.analyze_invoice = analyze_invoice; base.import_to_inventory = import_to_inventory
+    base.download = download
+    return base
+
+
+def expense_attachment_viewset(base):
+    @action(detail=True, methods=("get",))
+    def download(self, request, pk=None):
+        """Scarica la ricevuta della spesa tramite una richiesta autenticata."""
+        from core.uploads import protected_file_response
+        attachment = self.get_object()
+        return protected_file_response(attachment.file, attachment.original_name)
+
+    base.download = download
     return base
 
 
@@ -437,6 +468,14 @@ def document_ocr_analysis_viewset(base):
     def get_serializer_class(self):
         # La risposta grezza di Azure può essere molto grande e non serve alla UI.
         return OcrAnalysisSerializer
+
+    original_get_queryset = base.get_queryset
+
+    def get_queryset(self):
+        from documents.services import expire_stale_ocr_analyses
+        if self.request.method == "GET":
+            expire_stale_ocr_analyses()
+        return original_get_queryset(self)
 
     def proposal_from_request(request):
         review = request.data.get("review")
@@ -466,6 +505,7 @@ def document_ocr_analysis_viewset(base):
         }, status=201)
 
     base.get_serializer_class = get_serializer_class
+    base.get_queryset = get_queryset
     base.save_purchase_proposal = save_purchase_proposal
     base.apply_purchase_proposal = apply_purchase_proposal
     return base

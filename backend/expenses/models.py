@@ -7,6 +7,7 @@ from django.db.models import F, Q
 from django.utils import timezone
 
 from core.models import UUIDTimeStampedModel
+from core.uploads import RandomUploadPath, validate_uploaded_file
 
 
 class ExpenseCategory(UUIDTimeStampedModel):
@@ -192,7 +193,10 @@ class ExpenseAttachment(UUIDTimeStampedModel):
         on_delete=models.PROTECT,
         related_name="attachments",
     )
-    file = models.FileField(upload_to="expenses/%Y/%m/")
+    file = models.FileField(
+        upload_to=RandomUploadPath("expenses"),
+        validators=[validate_uploaded_file],
+    )
     original_name = models.CharField(max_length=255)
     description = models.CharField(max_length=255, blank=True)
     uploaded_by = models.ForeignKey(

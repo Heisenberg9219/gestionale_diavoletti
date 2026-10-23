@@ -38,11 +38,12 @@ class StockBalanceViewSet(InventoryReadViewSet):
         balance = self.get_object(); data = TransferSerializer(data=request.data); data.is_valid(raise_exception=True)
         destination = get_object_or_404(Location, pk=data.validated_data["destination_location"])
         outgoing, incoming = transfer_stock(variant=balance.variant, source_location=balance.location, destination_location=destination, quantity=data.validated_data["quantity"], reference_number=data.validated_data.get("reference_number", ""), notes=data.validated_data.get("notes", ""), created_by=request.user)
-        return Response({"outgoing": StockMovementSerializer(outgoing).data, "incoming": StockMovementSerializer(incoming).data})
+        return Response({"outgoing": StockMovementSerializer(outgoing, context={"request": request}).data, "incoming": StockMovementSerializer(incoming, context={"request": request}).data})
 
 
 class InventoryCostViewSet(InventoryReadViewSet):
     queryset = VariantInventoryCost.objects.select_related("variant", "variant__product"); serializer_class = VariantInventoryCostSerializer
+    permission_classes = (IsOwner,)  # costi medi e valore di magazzino: solo titolare
     search_fields = ("variant__sku", "variant__product__name"); ordering_fields = ("inventory_value", "total_quantity", "weighted_average_unit_cost")
 
 
@@ -61,7 +62,7 @@ class StockMovementViewSet(InventoryReadViewSet):
         variant = get_object_or_404(ProductVariant, pk=values["variant"]); location = get_object_or_404(Location, pk=values["location"])
         delta = values["quantity_delta"]
         movement = post_stock_movement(variant=variant, location=location, movement_type=StockMovement.Type.ADJUSTMENT_IN if delta > 0 else StockMovement.Type.ADJUSTMENT_OUT, quantity_delta=delta, notes=values["reason"], created_by=request.user)
-        return Response(StockMovementSerializer(movement).data, status=status.HTTP_201_CREATED)
+        return Response(StockMovementSerializer(movement, context={"request": request}).data, status=status.HTTP_201_CREATED)
 
 
 class InventoryCountSessionViewSet(viewsets.ModelViewSet):

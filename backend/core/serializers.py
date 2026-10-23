@@ -1,9 +1,12 @@
+from api.visibility import OwnerOnlyFieldsMixin
 from rest_framework import serializers
 
 from .models import Location, ShopSettings, TaxRate
 
 
-class ShopSettingsSerializer(serializers.ModelSerializer):
+class ShopSettingsSerializer(OwnerOnlyFieldsMixin, serializers.ModelSerializer):
+    owner_only_fields = ("default_markup",)
+
     class Meta:
         model = ShopSettings
         exclude = ("singleton_key",)

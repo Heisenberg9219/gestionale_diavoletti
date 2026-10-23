@@ -258,6 +258,11 @@ class OcrPurchaseRegistrationTests(TestCase):
         product = Product.objects.create(code="OCR_PURCHASE_PRODUCT", name="Prodotto OCR", category=category, tax_rate=tax_rate)
         self.variant = ProductVariant.objects.create(product=product, sku="OCR-PURCHASE-SKU", size=size)
         self.location = Location.objects.create(code="OCR_PURCHASE_LOCATION", name="Magazzino OCR", type=Location.Type.STOCKROOM)
+        from catalog.models import Brand
+        from suppliers.models import Supplier
+        self.tax_rate = tax_rate
+        self.supplier = Supplier.objects.create(code="OCR_PURCHASE_SUPPLIER", business_name="Fornitore OCR")
+        self.brand = Brand.objects.create(code="OCR_PURCHASE_BRAND", name="Marca OCR")
         self.document = BusinessDocument.objects.create(document_type=self.document_type, direction=DocumentType.Direction.INCOMING, document_date=date(2026, 9, 1), title="Da OCR", taxable_amount="0.00", tax_amount="0.00", total_amount="0.00", created_by=self.user)
         attachment = DocumentAttachment.objects.create(document=self.document, original_name="fattura.pdf", file=SimpleUploadedFile("fattura.pdf", b"%PDF"), uploaded_by=self.user)
         self.analysis = DocumentOcrAnalysis.objects.create(attachment=attachment, provider=DocumentOcrAnalysis.Provider.AZURE_DOCUMENT_INTELLIGENCE, status=DocumentOcrAnalysis.Status.SUCCEEDED, proposed_data={"supplier_vat_number": "IT12345678901"})
@@ -270,7 +275,7 @@ class OcrPurchaseRegistrationTests(TestCase):
             analysis=self.analysis,
             applied_by=self.user,
             location_id=self.location.pk,
-            review={"supplier_name": "Fornitore OCR", "invoice_number": "FT-42", "invoice_date": "2026-09-01", "tax_rate": "22", "items": [{"accepted": True, "description": "Prodotto OCR", "variant_id": str(self.variant.pk), "quantity": "3", "unit_price": "10.00"}]},
+            review={"supplier": str(self.supplier.pk), "supplier_name": "Fornitore OCR", "invoice_number": "FT-42", "invoice_date": "2026-09-01", "tax_rate": "22", "taxable_amount": "30.00", "total_amount": "36.60", "items": [{"accepted": True, "description": "Prodotto OCR", "variant_id": str(self.variant.pk), "quantity": "3", "unit_price": "10.00", "sale_price": "25.00"}]},
         )
         from inventory.models import StockBalance
         from purchasing.models import GoodsReceipt, SupplierInvoice
@@ -303,10 +308,10 @@ class OcrPurchaseRegistrationTests(TestCase):
         )
         apply_ocr_purchase_proposal(
             analysis=self.analysis, applied_by=self.user, location_id=self.location.pk,
-            review={"supplier_name": "Fornitore OCR", "invoice_number": "FT-TAGLIE", "invoice_date": "2026-09-01", "tax_rate": "22", "items": [{
+            review={"supplier": str(self.supplier.pk), "supplier_name": "Fornitore OCR", "invoice_number": "FT-TAGLIE", "invoice_date": "2026-09-01", "tax_rate": "22", "taxable_amount": "30.00", "total_amount": "36.60", "brand_id": str(self.brand.pk), "season_type": "AUTUMN_WINTER", "season_year": 2026, "items": [{
                 "accepted": True, "description": "Nuovo articolo", "variant_id": "",
                 "quantity": "3", "unit_price": "10.00", "new_variant": {
-                    "product_name": "Nuovo articolo", "category_id": str(self.variant.product.category_id),
+                    "product_name": "Nuovo articolo", "category_id": str(self.variant.product.category_id), "tax_rate_id": str(self.tax_rate.pk),
                     "color_id": "", "variants": [
                         {"sku": "TEST-S", "barcode": "1234567890123", "size_id": str(self.variant.size_id), "quantity": "1", "sale_price": "19.90"},
                         {"sku": "TEST-M", "size_id": str(other_size.pk), "quantity": "2", "sale_price": "19.90"},

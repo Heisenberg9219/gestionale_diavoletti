@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a PostgreSQL backup from the Docker database and retain seven copies."""
+"""Create a PostgreSQL backup (and a copy of uploaded files) and retain seven copies."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ COMPOSE_FILE = Path(os.environ.get("COMPOSE_FILE", PROJECT_ROOT / "infrastructur
 ENV_FILE = Path(os.environ.get("COMPOSE_ENV_FILE", PROJECT_ROOT / ".env"))
 BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", PROJECT_ROOT / "infrastructure" / "backups"))
 RETENTION_COUNT = int(os.environ.get("BACKUP_RETENTION_COUNT", "7"))
+BACKUP_MEDIA = os.environ.get("BACKUP_MEDIA", "true").lower() not in {"0", "false", "no"}
 
 
 def compose_command(*arguments: str) -> list[str]:
@@ -25,15 +26,36 @@ def compose_command(*arguments: str) -> list[str]:
     return command
 
 
-def remove_old_backups() -> None:
+def remove_old_backups(pattern: str = "diavoletti-*.dump") -> None:
     backups = sorted(
-        BACKUP_DIR.glob("diavoletti-*.dump"),
+        BACKUP_DIR.glob(pattern),
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )
     for backup in backups[RETENTION_COUNT:]:
         backup.unlink()
         logging.info("Backup eliminato per rotazione: %s", backup.name)
+
+
+def backup_media(timestamp: str) -> None:
+    """Archive uploaded files (invoices, receipts) from the backend container."""
+    destination = BACKUP_DIR / f"diavoletti-media-{timestamp}.tar.gz"
+    temporary = destination.with_name(destination.name + ".tmp")
+    command = compose_command(
+        "exec", "-T", "backend", "sh", "-c",
+        "mkdir -p /app/media && exec tar -C /app/media -czf - .",
+    )
+    try:
+        with temporary.open("wb") as output:
+            completed = subprocess.run(command, stdout=output, stderr=subprocess.PIPE, check=False)
+        if completed.returncode != 0:
+            raise RuntimeError(completed.stderr.decode("utf-8", errors="replace").strip())
+        temporary.replace(destination)
+        remove_old_backups("diavoletti-media-*.tar.gz")
+        logging.info("Backup allegati completato: %s", destination)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def main() -> int:
@@ -70,6 +92,11 @@ def main() -> int:
     except Exception:
         temporary.unlink(missing_ok=True)
         raise
+    if BACKUP_MEDIA:
+        try:
+            backup_media(timestamp)
+        except Exception as error:  # il dump del database resta comunque valido
+            logging.warning("Backup allegati non riuscito: %s", error)
     return 0
 
 

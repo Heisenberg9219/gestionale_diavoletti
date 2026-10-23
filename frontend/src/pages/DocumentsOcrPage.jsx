@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Eye, FileText, FileUp, LoaderCircle, Plus, ScanText, Search, Trash2, X } from "lucide-react";
-import { request } from "../api";
+import { openProtectedFile, request } from "../api";
 import PaginatedRows from "../components/PaginatedRows";
 import "../products.css";
 import "./DocumentsOcrPage.css";
@@ -72,12 +72,14 @@ function ocrWorkflowStatus(analysis, attachment) {
   if (isSavedDraft(proposalStatus)) return { key: "draft", label: "Bozza" };
   if (analysis?.status === "SUCCEEDED") return { key: "scanned", label: "Scansionato" };
   if (analysis?.status === "FAILED") return { key: "failed", label: "OCR non riuscito" };
+  if (analysis?.status === "PENDING") return { key: "pending", label: "OCR in corso" };
   return { key: "pending", label: attachment ? "PDF caricato" : "Nessun PDF" };
 }
 
 function ocrProcessingLabel(analysis, attachment) {
   if (analysis?.status === "SUCCEEDED") return "OCR completato";
   if (analysis?.status === "FAILED") return "OCR non riuscito";
+  if (analysis?.status === "PENDING") return "Analisi in corso…";
   return attachment ? "PDF pronto" : "Nessun PDF";
 }
 
@@ -296,7 +298,24 @@ export default function DocumentsOcrPage() {
   };
 
   async function upload(event) { event.preventDefault(); if (!form.file) return notice("Seleziona un PDF da allegare.", false); setSaving(true); try { const type = typeFor(form.document_type); const document = await request("/documents/documents/", { method: "POST", body: JSON.stringify({ document_type: form.document_type, direction: type.direction, status: "DRAFT", number: form.number, document_date: form.document_date, title: form.title, taxable_amount: "0.00", tax_amount: "0.00", total_amount: "0.00", counterparty_name: form.counterparty_name }) }); const data = new FormData(); data.append("file", form.file); data.append("description", "Documento caricato per analisi OCR"); await request(`/documents/documents/${document.id}/upload-attachment/`, { method: "POST", body: data }); setFormOpen(false); setForm(blank()); notice("Documento e PDF caricati. Avvia l'OCR per preparare la proposta."); await load(); } catch (error) { notice(error.message, false); } finally { setSaving(false); } }
-  async function analyze(attachment) { try { await request(`/documents/attachments/${attachment.id}/analyze-invoice/`, { method: "POST", body: JSON.stringify({}) }); notice("Analisi OCR completata. Apri la proposta per controllare gli articoli."); await load(); } catch (error) { notice(error.message, false); await load(); } }
+  // L'OCR gira in background sul server: qui si controlla lo stato ogni 3 secondi.
+  async function analyze(attachment) {
+    try {
+      const started = await request(`/documents/attachments/${attachment.id}/analyze-invoice/`, { method: "POST", body: JSON.stringify({}) });
+      notice("Analisi OCR in corso: puoi continuare a lavorare, il risultato comparirà qui.");
+      await load();
+      const deadline = Date.now() + 6 * 60 * 1000;
+      let analysis = started;
+      while (analysis.status === "PENDING" && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        analysis = await request(`/documents/ocr-analyses/${started.id}/`);
+      }
+      if (analysis.status === "SUCCEEDED") notice("Analisi OCR completata. Apri la proposta per controllare gli articoli.");
+      else if (analysis.status === "FAILED") notice(analysis.error_message || "L'analisi OCR non è stata completata.", false);
+      else notice("L'analisi OCR sta richiedendo più tempo del previsto. Ricarica la pagina tra qualche minuto.", false);
+      await load();
+    } catch (error) { notice(error.message, false); await load(); }
+  }
   const draftReview = () => ({ ...review, supplier: review.supplier_id, location: review.location_id });
   const applyReview = () => ({ ...draftReview(), items: review.items.map((item) => ({ ...item, variant_id: item.variant_id === "__new__" ? "" : item.variant_id, new_variant: item.variant_id === "__new__" ? item.new_variant : undefined })) });
   async function saveDraft() {
@@ -337,7 +356,7 @@ export default function DocumentsOcrPage() {
         const analysis = analysisForDocument(document); const attachment = attachments.find((item) => item.id === analysis?.attachment) || attachmentFor(document.id); const workflow = ocrWorkflowStatus(analysis, attachment);
         return <div className={`document-row${selectedDocuments.includes(document.id) ? " selected" : ""}`} key={document.id}>
           <span className="document-check"><input type="checkbox" aria-label={`Seleziona ${document.title}`} checked={selectedDocuments.includes(document.id)} onChange={() => toggleSelectedDocument(document.id)} /></span>
-          <div><strong>{document.title}</strong><span>{document.number || "Numero non indicato"}{document.counterparty_name ? ` · ${document.counterparty_name}` : ""}</span></div><span>{typeFor(document.document_type)?.name || directionLabel[document.direction]}</span><span>{date(document.document_date)}</span><span>{ocrProcessingLabel(analysis, attachment)}</span><em className={`document-status ${workflow.key}`}>{workflow.label}</em><div className="document-actions">{analysis?.status === "SUCCEEDED" && <button title="Apri proposta OCR" onClick={() => openProposal(analysis)}><Eye size={16} /></button>}{attachment && !analyses.some((entry) => entry.attachment === attachment.id && entry.status === "SUCCEEDED") && <button title="Analizza fattura con OCR" onClick={() => analyze(attachment)}><ScanText size={16} /></button>}{attachment?.file && <a href={attachment.file} target="_blank" rel="noreferrer" title="Apri PDF"><FileUp size={16} /></a>}</div>
+          <div><strong>{document.title}</strong><span>{document.number || "Numero non indicato"}{document.counterparty_name ? ` · ${document.counterparty_name}` : ""}</span></div><span>{typeFor(document.document_type)?.name || directionLabel[document.direction]}</span><span>{date(document.document_date)}</span><span>{ocrProcessingLabel(analysis, attachment)}</span><em className={`document-status ${workflow.key}`}>{workflow.label}</em><div className="document-actions">{analysis?.status === "SUCCEEDED" && <button title="Apri proposta OCR" onClick={() => openProposal(analysis)}><Eye size={16} /></button>}{attachment && !analyses.some((entry) => entry.attachment === attachment.id && ["SUCCEEDED", "PENDING"].includes(entry.status)) && <button title="Analizza fattura con OCR" onClick={() => analyze(attachment)}><ScanText size={16} /></button>}{attachment?.file && <button type="button" title="Apri PDF" onClick={() => openProtectedFile(`/documents/attachments/${attachment.id}/download/`).catch((error) => notice(error.message, false))}><FileUp size={16} /></button>}</div>
         </div>;
       })}</PaginatedRows>}
     </article>

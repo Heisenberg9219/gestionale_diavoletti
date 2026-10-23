@@ -51,6 +51,13 @@ class SaleViewSet(viewsets.ModelViewSet):
         "lines__variant__product__name", "lines__variant__product__brand__name",
     )
     ordering_fields = ("opened_at", "confirmed_at", "final_total_amount")
+    # Permesso richiesto al commesso per ogni operazione della vendita.
+    permission_actions = {
+        "create": "can_create", "set_line": "can_create", "add_with_gift_check": "can_create",
+        "set_customer": "can_create", "set_total": "can_create", "add_payment": "can_create",
+        "remove_line": "can_delete", "remove_payment": "can_delete", "cancel": "can_delete",
+        "confirm": "can_update", "update": "can_update", "partial_update": "can_update",
+    }
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -162,7 +169,7 @@ class SaleViewSet(viewsets.ModelViewSet):
         authorization = values.get("reserved_stock_authorization")
         gift_list_item = values.get("gift_list_item")
         line = set_sale_line(sale=self.get_object(), variant=get_object_or_404(ProductVariant, pk=values["variant"]), quantity=values["quantity"], manual_unit_price=values.get("manual_unit_price"), manual_override_reason=values.get("reason", ""), manual_override_by=request.user, reserved_stock_authorization=get_object_or_404(ReservedStockSaleAuthorization, pk=authorization) if authorization else None, gift_list_item=get_object_or_404(GiftListItem, pk=gift_list_item) if gift_list_item else None, discount_percentage=values["discount_percentage"] if "discount_percentage" in values else KEEP_DISCOUNT)
-        return Response(SaleLineSerializer(line).data)
+        return Response(SaleLineSerializer(line, context={"request": request}).data)
     @action(detail=True, methods=("post",), url_path="add-with-gift-check")
     @transaction.atomic
     def add_with_gift_check(self, request, pk=None):
@@ -219,7 +226,7 @@ class SaleViewSet(viewsets.ModelViewSet):
             if not item.reserved_quantity and not item.purchased_quantity and not item.sale_lines.exists():
                 item.delete()
         line = set_sale_line(sale=sale, variant=variant, quantity=quantity, manual_override_by=request.user)
-        return Response({"confirmation_required": False, "line": SaleLineSerializer(line).data})
+        return Response({"confirmation_required": False, "line": SaleLineSerializer(line, context={"request": request}).data})
 
     @action(detail=True, methods=("post",), url_path="set-total")
     def set_total(self, request, pk=None):

@@ -27,6 +27,11 @@ services:
     restart: unless-stopped
     env_file:
       - ../.env
+    environment:
+      # Allegati serviti da nginx solo dopo il controllo di Django.
+      MEDIA_USE_X_ACCEL_REDIRECT: "True"
+      # nginx è l'unico proxy davanti al backend (IP reale per il throttling).
+      DJANGO_NUM_PROXIES: "1"
     depends_on:
       db:
         condition: service_healthy

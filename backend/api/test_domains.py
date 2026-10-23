@@ -67,6 +67,9 @@ class DomainApiTests(TestCase):
         from giftlists.models import GiftList
         from giftlists.services import add_contribution
         location = Location.objects.create(code="API-GIFTS", name="Test", type="SALES_FLOOR")
+        from sales.models import CashRegister
+        from sales.services import open_cash_session
+        open_cash_session(cash_register=CashRegister.objects.create(code="API-CASSA", name="Cassa", location=location), opened_by=self.owner)
         gift_list = GiftList.objects.create(code="API-GIFT", list_type="BIRTHDAY", mode="CONTRIBUTIONS", title="Test", beneficiary_first_name="Anna", beneficiary_last_name="Rossi", location=location, created_by=self.owner)
         add_contribution(gift_list=gift_list, first_name="Mario", last_name="Rossi", amount="20.00", payment_method="CASH", recorded_by=self.owner)
         response = self.client.post(f"/api/v1/gift-lists/lists/{gift_list.pk}/close/", {}, format="json")
@@ -81,6 +84,9 @@ class DomainApiTests(TestCase):
         from notifications.models import Notification, NotificationDelivery
         notification = Notification.objects.create(notification_type="SYSTEM", title="Private", message="Private", deduplication_key="API-PRIVATE")
         delivery = NotificationDelivery.objects.create(notification=notification, user=self.owner)
+        from accounts.models import UserPagePermission
+        # Il commesso puo' vedere la pagina Notifiche ma non le notifiche altrui.
+        UserPagePermission.objects.create(user=self.clerk, page_key="Notifiche", can_view=True, can_update=True)
         self.client.force_authenticate(self.clerk)
         self.assertEqual(self.client.get(f"/api/v1/notifications/notifications/{notification.pk}/").status_code, 404)
         self.assertEqual(self.client.post(f"/api/v1/notifications/deliveries/{delivery.pk}/mark-read/", {}, format="json").status_code, 404)

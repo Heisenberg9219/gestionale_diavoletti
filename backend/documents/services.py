@@ -1,12 +1,13 @@
 import logging
 import re
+import threading
 from decimal import Decimal, ROUND_HALF_UP
-from datetime import date
+from datetime import date, timedelta
 from uuid import uuid4
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured, ValidationError
-from django.db import transaction
+from django.db import connections as db_connections, transaction
 from django.utils import timezone
 
 from .models import (
@@ -181,16 +182,73 @@ def _analyze_with_azure(*, content):
     return poller.result()
 
 
-def analyze_invoice_attachment_with_azure(*, attachment, requested_by):
-    attachment = DocumentAttachment.objects.get(pk=attachment.pk)
+OCR_STALE_AFTER = timedelta(minutes=10)
+
+
+def expire_stale_ocr_analyses():
+    """Chiude le analisi rimaste in attesa (es. riavvio del server durante l'OCR)."""
+    return DocumentOcrAnalysis.objects.filter(
+        status=DocumentOcrAnalysis.Status.PENDING,
+        created_at__lt=timezone.now() - OCR_STALE_AFTER,
+    ).update(
+        status=DocumentOcrAnalysis.Status.FAILED,
+        error_message="Analisi OCR interrotta. Avviala di nuovo.",
+        analyzed_at=timezone.now(),
+        updated_at=timezone.now(),
+    )
+
+
+def _validate_ocr_attachment(attachment):
     if not attachment.file.name.lower().endswith(".pdf"):
         raise ValidationError("L'analisi OCR della fattura richiede un file PDF.")
 
+
+@transaction.atomic
+def start_invoice_analysis(*, attachment, requested_by):
+    """Registra la richiesta OCR e la avvia in background dopo il commit.
+
+    La risposta HTTP torna subito: il frontend controlla lo stato dell'analisi
+    finché non diventa SUCCEEDED o FAILED. Così un PDF lungo non blocca il server.
+    """
+    attachment = DocumentAttachment.objects.select_for_update().get(pk=attachment.pk)
+    _validate_ocr_attachment(attachment)
+    expire_stale_ocr_analyses()
+    running = attachment.ocr_analyses.filter(status=DocumentOcrAnalysis.Status.PENDING).first()
+    if running is not None:
+        return running
     analysis = DocumentOcrAnalysis.objects.create(
         attachment=attachment,
         provider=DocumentOcrAnalysis.Provider.AZURE_DOCUMENT_INTELLIGENCE,
         requested_by=requested_by,
     )
+    transaction.on_commit(lambda: _launch_analysis_thread(analysis.pk))
+    return analysis
+
+
+def _launch_analysis_thread(analysis_id):
+    threading.Thread(
+        target=_run_analysis_in_thread,
+        args=(analysis_id,),
+        name=f"ocr-{analysis_id}",
+        daemon=True,
+    ).start()
+
+
+def _run_analysis_in_thread(analysis_id):
+    try:
+        process_invoice_analysis(analysis_id)
+    except Exception:
+        logger.exception("Errore imprevisto nell'analisi OCR %s", analysis_id)
+    finally:
+        db_connections.close_all()
+
+
+def process_invoice_analysis(analysis_id):
+    """Esegue l'analisi Azure di una richiesta in attesa e salva l'esito."""
+    analysis = DocumentOcrAnalysis.objects.select_related("attachment").get(pk=analysis_id)
+    if analysis.status != DocumentOcrAnalysis.Status.PENDING:
+        return analysis
+    attachment = analysis.attachment
     try:
         attachment.file.open("rb")
         try:
@@ -213,6 +271,18 @@ def analyze_invoice_attachment_with_azure(*, attachment, requested_by):
             "status", "error_message", "analyzed_at", "updated_at",
         ))
     return analysis
+
+
+def analyze_invoice_attachment_with_azure(*, attachment, requested_by):
+    """Versione sincrona (avvio + elaborazione immediata), usata nei test e negli script."""
+    attachment = DocumentAttachment.objects.get(pk=attachment.pk)
+    _validate_ocr_attachment(attachment)
+    analysis = DocumentOcrAnalysis.objects.create(
+        attachment=attachment,
+        provider=DocumentOcrAnalysis.Provider.AZURE_DOCUMENT_INTELLIGENCE,
+        requested_by=requested_by,
+    )
+    return process_invoice_analysis(analysis.pk)
 
 
 MONEY = Decimal("0.01")
@@ -416,7 +486,14 @@ def apply_ocr_purchase_proposal(*, analysis, review, supplier_id=None, location_
     DocumentAttachment.objects.select_for_update().get(pk=analysis.attachment_id)
     analysis = DocumentOcrAnalysis.objects.select_for_update().select_related("attachment__document").get(pk=analysis.pk)
     document = BusinessDocument.objects.select_for_update().select_related("document_type").get(pk=analysis.attachment.document_id)
-    review = dict(review, supplier=supplier_id or review.get("supplier") or review.get("supplier_id"), location=location_id or review.get("location") or review.get("location_id"))
+    supplier_value = supplier_id or review.get("supplier") or review.get("supplier_id")
+    location_value = location_id or review.get("location") or review.get("location_id")
+    # La proposta viene salvata come JSON: gli identificativi devono essere stringhe.
+    review = dict(
+        review,
+        supplier=str(supplier_value) if supplier_value else supplier_value,
+        location=str(location_value) if location_value else location_value,
+    )
     errors = validate_ocr_review(review)
     if errors:
         raise ValidationError(errors)

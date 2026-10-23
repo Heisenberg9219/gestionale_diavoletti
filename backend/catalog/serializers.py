@@ -1,3 +1,4 @@
+from api.visibility import OwnerOnlyFieldsMixin
 from rest_framework import serializers
 
 from .models import Brand, Category, Color, Product, ProductBarcode, ProductVariant, Season, Size, SizeScale
@@ -68,7 +69,8 @@ class ProductSerializer(ArchiveModelSerializer):
         fields = "__all__"
 
 
-class ProductVariantSerializer(ArchiveModelSerializer):
+class ProductVariantSerializer(OwnerOnlyFieldsMixin, ArchiveModelSerializer):
+    owner_only_fields = ("purchase_price",)
     stock_quantity = serializers.IntegerField(read_only=True)
     product_name = serializers.CharField(source="product.name", read_only=True)
     product_code = serializers.CharField(source="product.code", read_only=True)

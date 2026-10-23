@@ -276,6 +276,13 @@ class PromotionApplicationTests(TestCase):
         )
 
     def create_sale_with_lines(self, *, include_second=False):
+        from inventory.models import StockBalance
+        # La vendita richiede giacenza disponibile per aggiungere righe.
+        for variant in (self.first_variant, self.second_variant):
+            StockBalance.objects.get_or_create(
+                variant=variant, location=self.location,
+                defaults={"quantity_on_hand": 10},
+            )
         sale = Sale.objects.create(
             location=self.location,
             opened_by=self.user,

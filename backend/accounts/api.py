@@ -12,6 +12,13 @@ from django.utils import timezone
 from .models import UserPagePermission
 from .serializers import CurrentUserSerializer, LoginSerializer, ManagedUserSerializer
 from api.permissions import IsOwner
+from api.throttling import (
+    LoginRateThrottle,
+    RefreshRateThrottle,
+    is_login_locked,
+    register_failed_login,
+    reset_failed_logins,
+)
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers
 
@@ -54,21 +61,30 @@ def _create_refresh_token(user, *, session_expires_at=None, idle_expires_at=None
 class LoginView(APIView):
     permission_classes = (AllowAny,)
     authentication_classes = ()
+    throttle_classes = (LoginRateThrottle,)
 
     @extend_schema(request=LoginSerializer, responses=inline_serializer(name="LoginResponse", fields={"access": serializers.CharField(), "user": CurrentUserSerializer()}))
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data["email"]
+        if is_login_locked(email):
+            return Response(
+                {"detail": "Troppi tentativi non riusciti. Riprova tra qualche minuto."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
         user = authenticate(
             request=request,
-            email=serializer.validated_data["email"],
+            email=email,
             password=serializer.validated_data["password"],
         )
         if user is None or not user.is_active or user.status != user.Status.ACTIVE:
+            register_failed_login(email)
             return Response(
                 {"detail": "Email o password non valide."},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
+        reset_failed_logins(email)
         refresh = _create_refresh_token(user)
         response = Response({
             "access": str(refresh.access_token),
@@ -81,6 +97,7 @@ class LoginView(APIView):
 class RefreshView(APIView):
     permission_classes = (AllowAny,)
     authentication_classes = ()
+    throttle_classes = (RefreshRateThrottle,)
 
     @extend_schema(request=None, responses=inline_serializer(name="RefreshResponse", fields={"access": serializers.CharField()}))
     def post(self, request):

@@ -33,10 +33,19 @@ def page_permission_for_request(request):
     return None
 
 
-def permission_action_for_request(request):
+DELETE_SEGMENT_PREFIXES = ("remove", "cancel", "archive", "bulk-archive", "delete")
+
+
+def permission_action_for_request(request, view=None):
     if request.method in SAFE_METHODS:
         return "can_view"
-    if request.method == "DELETE" or any(value in request.path for value in ("/remove/", "/cancel/", "/archive/")):
+    # Una vista può dichiarare esplicitamente il permesso di ogni azione.
+    explicit = getattr(view, "permission_actions", None) or {}
+    action = getattr(view, "action", None)
+    if action in explicit:
+        return explicit[action]
+    segments = [segment for segment in request.path.split("/") if segment]
+    if request.method == "DELETE" or any(segment.startswith(DELETE_SEGMENT_PREFIXES) for segment in segments):
         return "can_delete"
     if request.method in {"PATCH", "PUT"} or any(value in request.path for value in (
         "/update", "/change", "/complete", "/close", "/resolve", "/confirm",
@@ -47,7 +56,7 @@ def permission_action_for_request(request):
     return "can_create"
 
 
-def clerk_has_page_permission(request):
+def clerk_has_page_permission(request, view=None):
     page = page_permission_for_request(request)
     if "/core/" in request.path:
         return request.method in SAFE_METHODS
@@ -65,7 +74,7 @@ def clerk_has_page_permission(request):
     return UserPagePermission.objects.filter(
         user=request.user,
         page_key__in=pages,
-        **{permission_action_for_request(request): True},
+        **{permission_action_for_request(request, view): True},
     ).exists()
 
 
@@ -92,7 +101,7 @@ class IsOwnerOrClerk(BasePermission):
     def has_permission(self, request, view):
         if user_has_role(request.user, "Titolare"):
             return True
-        return user_has_role(request.user, "Commesso") and clerk_has_page_permission(request)
+        return user_has_role(request.user, "Commesso") and clerk_has_page_permission(request, view)
 
 
 class OwnerWriteClerkRead(BasePermission):

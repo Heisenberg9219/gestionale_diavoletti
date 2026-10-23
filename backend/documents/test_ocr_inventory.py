@@ -8,7 +8,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from catalog.models import Category, Product, ProductVariant, ProductBarcode, Size, SizeScale
+from catalog.models import Brand, Category, Product, ProductVariant, ProductBarcode, Size, SizeScale
 from core.models import Location, TaxRate
 from inventory.models import StockBalance, StockMovement
 from pricing.models import VariantSalePrice
@@ -26,6 +26,7 @@ class OcrInventoryTests(TestCase):
         cls.location = Location.objects.create(code='OCR-L', name='Magazzino', type='STOCKROOM')
         cls.category = Category.objects.create(code='OCR-C', name='Abbigliamento')
         cls.tax = TaxRate.objects.create(code='OCR-T', name='IVA', percentage=22)
+        cls.brand = Brand.objects.create(code='OCR-B', name='Marca OCR')
         scale = SizeScale.objects.create(code='OCR-SC', name='Scala', scale_type='ALPHA')
         cls.size = Size.objects.create(size_scale=scale, code='M', label='M')
         kind = DocumentType.objects.create(code='OCR-INVOICE', name='Fattura acquisto', direction='INCOMING')
@@ -37,6 +38,7 @@ class OcrInventoryTests(TestCase):
         self.review = {
             'supplier': str(self.supplier.pk), 'location': str(self.location.pk), 'supplier_name': 'Fornitore modificato',
             'invoice_number': 'FA-2026-1', 'invoice_date': '2026-09-01', 'taxable_amount': '20.00', 'tax_rate': '22', 'total_amount': '24.40',
+            'brand_id': str(self.brand.pk), 'season_type': 'SPRING_SUMMER', 'season_year': 2026,
             'items': [{'accepted': True, 'description': 'Descrizione modificata', 'quantity': '2', 'unit_price': '10.00', 'sale_price': '25.00', 'variant_id': '',
                        'new_product': {'name': 'Maglia oceano', 'category': str(self.category.pk), 'tax_rate': str(self.tax.pk), 'size': str(self.size.pk), 'color': '', 'sku': 'OCR-NEW', 'barcode': '123456789'}}]
         }

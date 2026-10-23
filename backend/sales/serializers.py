@@ -1,5 +1,7 @@
 from decimal import Decimal
 from rest_framework import serializers
+
+from api.visibility import OwnerOnlyFieldsMixin
 from .models import CashRegister, CashSession, Sale, SaleLine, SalePayment
 
 
@@ -11,6 +13,8 @@ class CashRegisterSerializer(serializers.ModelSerializer):
 class CashSessionSerializer(serializers.ModelSerializer):
     cash_payments_total = serializers.SerializerMethodField()
     card_payments_total = serializers.SerializerMethodField()
+    # Contanti da contributi liste regalo e vendita buoni.
+    other_cash_total = serializers.SerializerMethodField()
 
     def _payment_totals(self, session):
         from django.db.models import Sum
@@ -30,12 +34,18 @@ class CashSessionSerializer(serializers.ModelSerializer):
     def get_card_payments_total(self, session):
         return str(self._payment_totals(session).get("CARD", Decimal("0.00")))
 
+    def get_other_cash_total(self, session):
+        from .services import other_cash_income_total
+        return str(other_cash_income_total(session))
+
     class Meta:
         model = CashSession; fields = "__all__"
         read_only_fields = ("id", "status", "opened_at", "opened_by", "closed_at", "closed_by", "expected_cash_amount", "counted_cash_amount", "cash_difference", "created_at", "updated_at")
 
 
-class SaleLineSerializer(serializers.ModelSerializer):
+class SaleLineSerializer(OwnerOnlyFieldsMixin, serializers.ModelSerializer):
+    owner_only_fields = ("unit_cost_snapshot", "total_cost_amount")
+
     class Meta:
         model = SaleLine; fields = "__all__"; read_only_fields = tuple(field.name for field in SaleLine._meta.fields)
 
@@ -45,7 +55,8 @@ class SalePaymentSerializer(serializers.ModelSerializer):
         model = SalePayment; fields = "__all__"; read_only_fields = tuple(field.name for field in SalePayment._meta.fields)
 
 
-class SaleSerializer(serializers.ModelSerializer):
+class SaleSerializer(OwnerOnlyFieldsMixin, serializers.ModelSerializer):
+    owner_only_fields = ("total_cost_amount",)
     lines = SaleLineSerializer(many=True, read_only=True); payments = SalePaymentSerializer(many=True, read_only=True)
     customer_name = serializers.SerializerMethodField()
     location_name = serializers.CharField(source="location.name", read_only=True)

@@ -75,6 +75,12 @@ class GiftListServiceTests(TestCase):
             defaults={"shop_name": "I Diavoletti"},
         )
 
+    def open_cash(self):
+        from sales.models import CashRegister
+        from sales.services import open_cash_session
+        register = CashRegister.objects.create(code="GL-CASSA", name="Cassa", location=self.location)
+        return open_cash_session(cash_register=register, opened_by=self.user)
+
     def setUp(self):
         StockBalance.objects.update_or_create(
             variant=self.variant,
@@ -193,6 +199,7 @@ class GiftListServiceTests(TestCase):
         self.assertEqual(purchase.sale_line, line)
 
     def test_contribution_list_closes_and_generates_voucher(self):
+        self.open_cash()
         gift_list = self.create_list(mode=GiftList.Mode.CONTRIBUTIONS)
         add_contribution(
             gift_list=gift_list,
@@ -228,6 +235,7 @@ class GiftListServiceTests(TestCase):
             close_gift_list(gift_list=gift_list, closed_by=self.user)
 
     def test_closed_list_rejects_new_contribution(self):
+        self.open_cash()
         gift_list = self.create_list(mode=GiftList.Mode.CONTRIBUTIONS)
         add_contribution(
             gift_list=gift_list,

@@ -59,6 +59,58 @@ def open_cash_session(
     )
 
 
+def resolve_cash_session_for_cash_income(*, location=None, cash_session=None):
+    """Trova la sessione di cassa in cui registrare un incasso in contanti
+    che non passa da una vendita (contributi liste regalo, vendita buoni)."""
+    if cash_session is not None:
+        cash_session = (
+            CashSession.objects.select_for_update()
+            .select_related("cash_register")
+            .get(pk=cash_session.pk)
+        )
+        if cash_session.status != CashSession.Status.OPEN:
+            raise ValidationError("La sessione di cassa indicata non è aperta.")
+        if location is not None and cash_session.cash_register.location_id != location.pk:
+            raise ValidationError("La cassa indicata appartiene a un'altra sede.")
+        return cash_session
+
+    open_sessions = CashSession.objects.filter(status=CashSession.Status.OPEN)
+    sessions = []
+    if location is not None:
+        sessions = list(
+            open_sessions.filter(cash_register__location=location)
+            .select_for_update()[:2]
+        )
+    if not sessions:
+        # Nessuna cassa aperta nella sede indicata: si usa l'unica cassa aperta.
+        sessions = list(open_sessions.select_for_update()[:2])
+    if not sessions:
+        raise ValidationError(
+            "Per registrare un incasso in contanti apri prima la cassa."
+        )
+    if len(sessions) > 1:
+        raise ValidationError(
+            "Ci sono più casse aperte: indica su quale cassa registrare il contante."
+        )
+    return sessions[0]
+
+
+def other_cash_income_total(cash_session):
+    """Contanti incassati fuori dalle vendite: contributi liste e buoni venduti."""
+    from giftlists.models import GiftListContribution
+    from vouchers.models import Voucher
+
+    contributions = GiftListContribution.objects.filter(
+        cash_session=cash_session,
+        payment_method=GiftListContribution.PaymentMethod.CASH,
+    ).aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
+    vouchers = Voucher.objects.filter(
+        cash_session=cash_session,
+        payment_method="CASH",
+    ).aggregate(total=Sum("initial_amount"))["total"] or Decimal("0.00")
+    return contributions + vouchers
+
+
 @transaction.atomic
 def close_cash_session(
     *,
@@ -89,7 +141,9 @@ def close_cash_session(
     ).aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
 
     expected_cash_amount = (
-        cash_session.opening_cash_amount + cash_sales
+        cash_session.opening_cash_amount
+        + cash_sales
+        + other_cash_income_total(cash_session)
     ).quantize(
         Decimal("0.01"),
         rounding=ROUND_HALF_UP,
@@ -780,6 +834,16 @@ def confirm_sale(
         raise ValidationError(
             "Non è possibile confermare una vendita vuota."
         )
+
+    # Blocca subito tutte le giacenze coinvolte in un ordine stabile (pk):
+    # due vendite confermate in parallelo con gli stessi articoli in ordine
+    # diverso non possono più andare in deadlock.
+    list(
+        StockBalance.objects.select_for_update(of=("self",))
+        .filter(variant_id__in={line.variant_id for line in lines})
+        .order_by("pk")
+        .values_list("pk", flat=True)
+    )
 
     if sale.channel == Sale.Channel.POS:
         if sale.cash_session_id is None:
