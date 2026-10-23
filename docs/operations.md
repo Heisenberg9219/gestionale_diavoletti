@@ -1,18 +1,66 @@
 # Operazioni di produzione
 
-## Backup PostgreSQL
+## Attività pianificate (backup, certificati, avvisi)
 
-Lo script `infrastructure/scripts/backup_postgres.py` crea un dump PostgreSQL in formato custom e un archivio `diavoletti-media-*.tar.gz` con gli allegati caricati (fatture, ricevute), conservando gli ultimi sette di ciascun tipo. Per saltare gli allegati impostare `BACKUP_MEDIA=false`. Il deploy esegue automaticamente un backup prima di applicare le migrazioni. I dump sono archiviati in `infrastructure/backups/`, esclusa da Git.
+Sul server, con l'utente `deploy`, dalla cartella del progetto:
 
-Sul server, eseguire il processo con l'utente `deploy`, autorizzato a usare Docker. Dopo il primo deploy creare la directory dei log e aggiungere al crontab:
-
-```cron
-0 2 * * * cd /srv/diavoletti && COMPOSE_FILE=/srv/diavoletti/infrastructure/compose.server.yml COMPOSE_ENV_FILE=/srv/diavoletti/.env BACKUP_DIR=/srv/diavoletti/infrastructure/backups /usr/bin/python3 infrastructure/scripts/backup_postgres.py >> /srv/diavoletti/logs/backup.log 2>&1
+```bash
+cd /srv/diavoletti
+sh infrastructure/scripts/install_cron.sh
 ```
 
-Il job genera un backup ogni notte alle 02:00 e rimuove automaticamente quelli oltre il settimo. Per utilizzare un disco o un mount diverso impostare `BACKUP_DIR`; per modificare la rotazione impostare `BACKUP_RETENTION_COUNT`.
+Lo script installa (o aggiorna, senza duplicare) nel crontab:
 
-Prima della pubblicazione configurare anche una copia esterna cifrata dei backup. Conservare soltanto i backup sullo stesso server protegge dagli errori applicativi, ma non dalla perdita completa della macchina.
+| Ora (orario del server) | Attività | Log |
+|---|---|---|
+| 02:00 | backup di database e allegati | `logs/backup.log` |
+| 03:15 | rinnovo certificati HTTPS | `logs/certificates.log` |
+| 07:00 | avvisi su spese, buoni, liste regalo e riordini | `logs/notifications.log` |
+
+Gli avvisi sui prodotti esauriti sono immediati e non dipendono dal cron.
+
+## Backup
+
+`infrastructure/scripts/backup_postgres.py` salva in `infrastructure/backups/`:
+
+- `diavoletti-AAAA-MM-GG.dump`: tutto il database (formato custom di PostgreSQL), verificato con `pg_restore --list` subito dopo la creazione;
+- `diavoletti-media-AAAA-MM-GG.tar.gz`: gli allegati caricati (fatture, ricevute).
+
+Si tiene **un backup per giorno per gli ultimi 7 giorni**: il giorno più vecchio viene eliminato automaticamente. Se lo script gira più volte nello stesso giorno (cron e deploy) il file del giorno viene sostituito dal più recente. Un backup non riuscito o illeggibile non sostituisce quello precedente.
+
+Backup manuale in qualsiasi momento:
+
+```bash
+cd /srv/diavoletti
+COMPOSE_FILE=infrastructure/compose.server.yml python3 infrastructure/scripts/backup_postgres.py
+ls -lh infrastructure/backups
+```
+
+I backup restano sullo stesso server: proteggono da errori e dati danneggiati, non dalla perdita della macchina. Per il disaster recovery copiare regolarmente la cartella `infrastructure/backups` (e il file `.env`) su uno spazio esterno.
+
+## Ripristino
+
+```bash
+cd /srv/diavoletti
+sh infrastructure/scripts/restore_backup.sh              # ultimo backup
+sh infrastructure/scripts/restore_backup.sh 2026-10-21   # backup di un giorno preciso
+```
+
+Lo script chiede di scrivere `RIPRISTINA`, poi:
+
+1. controlla che il backup sia leggibile (se non lo è si ferma senza toccare nulla);
+2. salva lo stato attuale in `infrastructure/backups/pre-restore/` (ultime 3 copie);
+3. ferma backend e frontend, ricrea il database e carica il dump;
+4. ripristina gli allegati dello stesso giorno;
+5. applica le migrazioni del codice attuale e riavvia tutto.
+
+### Disaster recovery su un server nuovo
+
+1. Installare Docker, clonare il repository in `/srv/diavoletti` sul branch giusto e copiare il file `.env` salvato.
+2. Copiare i file di backup in `/srv/diavoletti/infrastructure/backups/`.
+3. Avviare il database: `docker compose --env-file .env -f infrastructure/compose.server.yml up -d --wait db`
+4. Ripristinare: `sh infrastructure/scripts/restore_backup.sh` (lo script avvia anche backend e frontend, ricostruendo le immagini se mancano).
+5. Reinstallare le attività pianificate: `sh infrastructure/scripts/install_cron.sh`.
 
 ## HTTPS e rinnovo certificati
 
@@ -24,11 +72,7 @@ docker compose --env-file .env -f infrastructure/compose.server.yml run --rm cer
 docker compose --env-file .env -f infrastructure/compose.server.yml up -d --force-recreate frontend
 ```
 
-Aprire la porta TCP 443 nel firewall dopo l'emissione e configurare il rinnovo automatico nel crontab dell'utente `deploy`:
-
-```cron
-15 3 * * * /bin/sh /srv/diavoletti/infrastructure/scripts/renew_certificates.sh >> /srv/diavoletti/logs/certificates.log 2>&1
-```
+Aprire la porta TCP 443 nel firewall dopo l'emissione. Il rinnovo automatico è installato da `infrastructure/scripts/install_cron.sh` (vedi "Attività pianificate").
 
 ## OCR delle fatture
 
