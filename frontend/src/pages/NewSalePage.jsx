@@ -16,7 +16,7 @@ const parsePercentage = (value) => {
 const formatPercentage = (value) => Number(value).toLocaleString("it-IT", { maximumFractionDigits: 2 });
 const paymentLabels = { CASH: "Contanti", CARD: "Carta", OTHER: "Altro", GIFT_CARD: "Gift card", STORE_CREDIT: "Buono reso" };
 
-export default function NewSalePage({ onNavigate }) {
+export default function NewSalePage({ onNavigate, exchangeCredit, onClearExchange }) {
   const [session, setSession] = useState(null);
   const [register, setRegister] = useState(null);
   const [sale, setSale] = useState(null);
@@ -67,6 +67,7 @@ export default function NewSalePage({ onNavigate }) {
   const [voucherSearchError, setVoucherSearchError] = useState("");
   const [voucherMore, setVoucherMore] = useState(false);
   const voucherRequest = useRef(0);
+  const [exchangeApplied, setExchangeApplied] = useState(false);
   const [voucherMessage, setVoucherMessage] = useState("");
   const [reservedPrompt, setReservedPrompt] = useState(null);
   const [reservedChoice, setReservedChoice] = useState("");
@@ -271,22 +272,24 @@ export default function NewSalePage({ onNavigate }) {
       setVoucherDropdown(false);
       setSplitPayment(false);
       setSale(currentSale); setPaymentMethod("CASH"); setPaymentAmount(remaining.toFixed(2)); setCashReceived(remaining.toFixed(2)); setPaymentReference(""); setPaymentError(""); setPaymentOpen(true);
+      if (exchangeCredit?.code && !exchangeApplied && remaining > 0) await applyVoucher(exchangeCredit.code, currentSale);
     } catch (error) { setMessage(`Impossibile preparare il pagamento: ${error.message}`); }
   }
-  async function applyVoucher() {
+  async function applyVoucher(codeArg, saleArg) {
+    const baseSale = saleArg || sale;
     setVoucherDropdown(false);
-    const code = voucherCode.trim().toUpperCase();
+    const code = (typeof codeArg === "string" ? codeArg : voucherCode).trim().toUpperCase();
     if (!code) return setVoucherMessage("Inserisci il codice del buono.");
     setPaying(true);
     try {
       const vouchers = list(await request(`/vouchers/vouchers/?search=${encodeURIComponent(code)}&status=ACTIVE`));
       const voucher = vouchers.find((item) => item.code?.toUpperCase() === code);
       if (!voucher) return setVoucherMessage("Buono non trovato o non utilizzabile.");
-      const remaining = Math.max(0, paymentTotal(sale));
-      await request(`/vouchers/vouchers/${voucher.id}/redeem/`, { method: "POST", body: JSON.stringify({ sale: sale.id, amount: remaining.toFixed(2) }) });
-      const refreshed = await request(`/sales/sales/${sale.id}/`);
+      const remaining = Math.max(0, paymentTotal(baseSale));
+      await request(`/vouchers/vouchers/${voucher.id}/redeem/`, { method: "POST", body: JSON.stringify({ sale: baseSale.id, amount: remaining.toFixed(2) }) });
+      const refreshed = await request(`/sales/sales/${baseSale.id}/`);
       const newRemaining = Math.max(0, paymentTotal(refreshed));
-      setSale(refreshed); setPaymentAmount(newRemaining.toFixed(2)); setCashReceived(newRemaining.toFixed(2)); setVoucherCode(""); setVoucherMessage(`Buono applicato: ${euro.format(Math.min(Number(voucher.current_balance || 0), remaining))}.`);
+      setSale(refreshed); setPaymentAmount(newRemaining.toFixed(2)); setCashReceived(newRemaining.toFixed(2)); setVoucherCode(""); if (exchangeCredit && code === exchangeCredit.code.toUpperCase()) setExchangeApplied(true); setVoucherMessage(`Buono applicato: ${euro.format(Math.min(Number(voucher.current_balance || 0), remaining))}.`);
       setSplitCash(newRemaining.toFixed(2)); setSplitCard("0.00");
     } catch (error) { setVoucherMessage(`Impossibile applicare il buono: ${error.message}`); }
     finally { setPaying(false); }
@@ -333,7 +336,14 @@ export default function NewSalePage({ onNavigate }) {
     setPaying(true); setPaymentError("");
     try {
       const confirmed = await request(`/sales/sales/${sale.id}/confirm/`, { method: "POST", body: JSON.stringify({}) });
-      setPaymentOpen(false); setSale(null); setLabels({}); setMessage(`Vendita ${confirmed.number} registrata correttamente.`); inputRef.current?.focus();
+      setPaymentOpen(false); setSale(null); setLabels({}); let doneMessage = `Vendita ${confirmed.number} registrata correttamente.`;
+      if (exchangeCredit) {
+        const voucher = await request(`/vouchers/vouchers/${exchangeCredit.voucherId}/`).catch(() => null);
+        const left = Number(voucher?.current_balance || 0);
+        doneMessage += left > 0 ? ` Cambio concluso: restano ${euro.format(left)} sul buono ${exchangeCredit.code}, consegnalo al cliente.` : " Cambio concluso: credito del reso interamente utilizzato.";
+        setExchangeApplied(false); onClearExchange?.();
+      }
+      setMessage(doneMessage); inputRef.current?.focus();
     } catch (error) { setPaymentError(`Vendita non conclusa: ${error.message}`); }
     finally { setPaying(false); }
   }
@@ -424,6 +434,7 @@ export default function NewSalePage({ onNavigate }) {
 <div className="sale-draft-badge">
 <ShoppingCart size={18} />{sale ? "Scontrino in corso" : "Scontrino vuoto"}</div>
 </div>
+    {exchangeCredit && <div className="exchange-banner"><div><strong>Cambio dal reso {exchangeCredit.returnNumber}</strong><span>Credito {euro.format(exchangeCredit.amount)} (buono {exchangeCredit.code}){exchangeApplied ? " già applicato al pagamento." : ": aggiungi i nuovi articoli, al pagamento viene applicato da solo."} Se il cambio non si conclude, il buono resta valido: consegnalo al cliente.</span></div><button type="button" className="secondary-action" onClick={() => { setExchangeApplied(false); onClearExchange?.(); }}>Chiudi cambio</button></div>}
     <div className="pos-layout">
 <section className="pos-products">
 <form className="pos-search" onSubmit={search}>
