@@ -2,7 +2,9 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.contrib.auth.models import Group
 from django.test import TestCase
+from rest_framework.test import APIClient
 
 from catalog.models import Category, Product, ProductVariant, Size, SizeScale
 from core.models import Location, ShopSettings, TaxRate
@@ -11,10 +13,12 @@ from inventory.models import StockBalance, VariantInventoryCost
 from loyalty.models import LoyaltyPointMovement
 from loyalty.services import get_customer_points_balance, record_point_movement
 from sales.models import Sale, SaleLine
-from vouchers.models import Voucher
+from accounts.models import UserPagePermission
+from vouchers.models import Voucher, VoucherMovement
 
 from .models import CustomerReturn
 from .services import (
+    cancel_confirmed_return,
     confirm_customer_return,
     create_customer_return,
     get_returnable_quantity,
@@ -257,3 +261,165 @@ class CustomerReturnServiceTests(TestCase):
         issued = result.return_voucher.issued_at
         expected_month = (issued.month + 5) % 12 + 1
         self.assertEqual(result.return_voucher.expires_at.month, expected_month)
+
+    # ---------- Annullamento di un reso confermato ----------
+
+    def confirmed_return(self, quantity=1):
+        customer_return = self.create_draft_return()
+        set_return_line(
+            customer_return=customer_return,
+            original_sale_line=self.sale_line,
+            quantity=quantity,
+        )
+        return confirm_customer_return(
+            customer_return=customer_return,
+            confirmed_by=self.user,
+        )
+
+    def stock(self):
+        return StockBalance.objects.get(
+            variant=self.variant,
+            location=self.location,
+        ).quantity_on_hand
+
+    def test_cancel_confirmed_return_reverts_stock_voucher_and_points(self):
+        confirmed = self.confirmed_return()
+        self.assertEqual(self.stock(), 1)
+        self.assertEqual(get_customer_points_balance(customer=self.customer), 2)
+
+        result = cancel_confirmed_return(
+            customer_return=confirmed,
+            cancelled_by=self.user,
+            reason="Reso registrato per errore",
+        )
+
+        self.assertEqual(result.status, CustomerReturn.Status.CANCELLED)
+        self.assertEqual(result.number, confirmed.number)
+        self.assertEqual(result.cancellation_reason, "Reso registrato per errore")
+        voucher = Voucher.objects.get(pk=confirmed.return_voucher_id)
+        self.assertEqual(voucher.status, Voucher.Status.CANCELLED)
+        self.assertEqual(voucher.current_balance, Decimal("0.00"))
+        self.assertEqual(self.stock(), 0)
+        self.assertEqual(get_customer_points_balance(customer=self.customer), 4)
+        # L'articolo torna restituibile e non pesa più sul report dei resi.
+        self.assertEqual(get_returnable_quantity(original_sale_line=self.sale_line), 2)
+
+    def test_cancelled_return_allows_a_new_return_of_the_same_item(self):
+        confirmed = self.confirmed_return(quantity=2)
+        cancel_confirmed_return(
+            customer_return=confirmed,
+            cancelled_by=self.user,
+            reason="Errore di taglia",
+        )
+        again = self.confirmed_return(quantity=2)
+        self.assertEqual(again.status, CustomerReturn.Status.CONFIRMED)
+        self.assertEqual(again.points_reversed, 4)
+        self.assertEqual(self.stock(), 2)
+
+    def test_cannot_cancel_return_when_voucher_was_used(self):
+        confirmed = self.confirmed_return()
+        voucher = confirmed.return_voucher
+        VoucherMovement.objects.create(
+            voucher=voucher,
+            movement_type=VoucherMovement.Type.REDEMPTION,
+            amount_delta=Decimal("-5.00"),
+            balance_after=voucher.initial_amount - Decimal("5.00"),
+            occurred_at=voucher.issued_at,
+            created_by=self.user,
+        )
+        Voucher.objects.filter(pk=voucher.pk).update(
+            current_balance=voucher.initial_amount - Decimal("5.00")
+        )
+
+        with self.assertRaises(ValidationError):
+            cancel_confirmed_return(
+                customer_return=confirmed,
+                cancelled_by=self.user,
+                reason="Tentativo",
+            )
+        confirmed.refresh_from_db()
+        self.assertEqual(confirmed.status, CustomerReturn.Status.CONFIRMED)
+        self.assertEqual(self.stock(), 1)
+
+    def test_cannot_cancel_return_when_item_was_sold_again(self):
+        confirmed = self.confirmed_return()
+        StockBalance.objects.filter(
+            variant=self.variant,
+            location=self.location,
+        ).update(quantity_on_hand=0)
+
+        with self.assertRaises(ValidationError):
+            cancel_confirmed_return(
+                customer_return=confirmed,
+                cancelled_by=self.user,
+                reason="Tentativo",
+            )
+        confirmed.refresh_from_db()
+        voucher = Voucher.objects.get(pk=confirmed.return_voucher_id)
+        self.assertEqual(confirmed.status, CustomerReturn.Status.CONFIRMED)
+        self.assertEqual(voucher.status, Voucher.Status.ACTIVE)
+
+    def test_cancel_confirmed_return_requires_reason_and_confirmed_status(self):
+        confirmed = self.confirmed_return()
+        with self.assertRaises(ValidationError):
+            cancel_confirmed_return(
+                customer_return=confirmed,
+                cancelled_by=self.user,
+                reason="  ",
+            )
+        with self.assertRaises(ValidationError):
+            cancel_confirmed_return(
+                customer_return=self.create_draft_return(),
+                cancelled_by=self.user,
+                reason="Bozza",
+            )
+
+    def test_api_cancel_confirmed_return_is_reserved_to_owner(self):
+        confirmed = self.confirmed_return()
+        url = f"/api/v1/returns/returns/{confirmed.id}/cancel/"
+        clerk = get_user_model().objects.create_user(
+            email="returns-clerk@example.com",
+            password="test-password",
+        )
+        clerk.groups.add(Group.objects.get_or_create(name="Commesso")[0])
+        UserPagePermission.objects.create(
+            user=clerk,
+            page_key="Resi",
+            can_view=True,
+            can_create=True,
+            can_update=True,
+            can_delete=True,
+        )
+        client = APIClient()
+        client.force_authenticate(clerk)
+        response = client.post(url, {"reason": "Errore"}, format="json")
+        self.assertEqual(response.status_code, 403)
+        confirmed.refresh_from_db()
+        self.assertEqual(confirmed.status, CustomerReturn.Status.CONFIRMED)
+
+        owner = get_user_model().objects.create_user(
+            email="returns-owner@example.com",
+            password="test-password",
+        )
+        owner.groups.add(Group.objects.get_or_create(name="Titolare")[0])
+        client.force_authenticate(owner)
+        response = client.post(url, {"reason": "Errore"}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["status"], CustomerReturn.Status.CANCELLED)
+
+    def test_api_cancel_still_cancels_drafts(self):
+        draft = self.create_draft_return()
+        owner = get_user_model().objects.create_user(
+            email="returns-owner-draft@example.com",
+            password="test-password",
+        )
+        owner.groups.add(Group.objects.get_or_create(name="Titolare")[0])
+        client = APIClient()
+        client.force_authenticate(owner)
+        response = client.post(
+            f"/api/v1/returns/returns/{draft.id}/cancel/",
+            {"reason": "Bozza non necessaria"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["status"], CustomerReturn.Status.CANCELLED)

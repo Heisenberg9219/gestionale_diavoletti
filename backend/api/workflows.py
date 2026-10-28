@@ -1,7 +1,7 @@
 from django.shortcuts import get_object_or_404
 from django.utils.dateparse import parse_datetime
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework import serializers
@@ -512,7 +512,9 @@ def document_ocr_analysis_viewset(base):
 
 
 def return_viewset(base):
-    from returns.services import cancel_draft_return, confirm_customer_return, create_customer_return, set_return_line
+    from returns.models import CustomerReturn
+    from returns.services import cancel_confirmed_return, cancel_draft_return, confirm_customer_return, create_customer_return, set_return_line
+    from .permissions import user_has_role
     from sales.models import Sale, SaleLine
     @action(detail=False,methods=("post",),url_path="create-draft")
     def create_draft(self,request):
@@ -526,7 +528,18 @@ def return_viewset(base):
     @action(detail=True,methods=("post",))
     def confirm(self,request,pk=None): return Response(self.get_serializer(confirm_customer_return(customer_return=self.get_object(),confirmed_by=request.user)).data)
     @action(detail=True,methods=("post",))
-    def cancel(self,request,pk=None): return Response(self.get_serializer(cancel_draft_return(customer_return=self.get_object(),cancelled_by=request.user,reason=required(request.data,"reason"))).data)
+    def cancel(self,request,pk=None):
+        customer_return=self.get_object()
+        reason=required(request.data,"reason")
+        if customer_return.status==CustomerReturn.Status.CONFIRMED:
+            # Annullare un reso confermato rimette in vendita il capo e annulla
+            # il buono: operazione riservata al titolare.
+            if not user_has_role(request.user,"Titolare"):
+                raise PermissionDenied("Solo il titolare può annullare un reso confermato.")
+            obj=cancel_confirmed_return(customer_return=customer_return,cancelled_by=request.user,reason=reason)
+        else:
+            obj=cancel_draft_return(customer_return=customer_return,cancelled_by=request.user,reason=reason)
+        return Response(self.get_serializer(obj).data)
     base.create_draft=create_draft; base.set_line=set_line; base.confirm=confirm; base.cancel=cancel
     return base
 

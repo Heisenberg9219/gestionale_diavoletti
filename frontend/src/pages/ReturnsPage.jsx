@@ -20,7 +20,7 @@ function lineDetails(line) {
   ].filter(Boolean).join(" · ");
 }
 
-export default function ReturnsPage({ onNavigate, onStartExchange, initialSale, onClearInitialSale }) {
+export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, onStartExchange, initialSale, onClearInitialSale }) {
   const [returns, setReturns] = useState([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -41,6 +41,8 @@ export default function ReturnsPage({ onNavigate, onStartExchange, initialSale, 
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
   const [detailBusy, setDetailBusy] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
 
   const loadReturns = () => {
     setLoading(true);
@@ -172,6 +174,8 @@ export default function ReturnsPage({ onNavigate, onStartExchange, initialSale, 
   }
 
   function closeDetail() {
+    setCancelOpen(false);
+    setCancelReason("");
     setDetail(null);
     setDetailData(null);
     setDetailError("");
@@ -205,6 +209,27 @@ export default function ReturnsPage({ onNavigate, onStartExchange, initialSale, 
     }
   }
 
+  // Annulla un reso confermato: il capo esce di nuovo dal magazzino, il buono
+  // viene annullato e i punti tornano al cliente. Il server lo consente solo
+  // al titolare e solo se il buono non è stato usato.
+  async function cancelConfirmed(event) {
+    event.preventDefault();
+    if (!cancelReason.trim()) return setDetailError("Scrivi il motivo dell'annullamento.");
+    setDetailBusy(true);
+    setDetailError("");
+    try {
+      const cancelled = await request(`/returns/returns/${detail.id}/cancel/`, { method: "POST", body: JSON.stringify({ reason: cancelReason.trim() }) });
+      setCancelOpen(false);
+      setCancelReason("");
+      loadReturns();
+      await openDetail(cancelled);
+    } catch (err) {
+      setDetailError(err.message);
+    } finally {
+      setDetailBusy(false);
+    }
+  }
+
   // ---------- Schermate ----------
 
   if (detail) {
@@ -212,7 +237,9 @@ export default function ReturnsPage({ onNavigate, onStartExchange, initialSale, 
     const lines = detailData?.lines || [];
     const voucher = detailData?.voucher;
     const draftTotal = lines.reduce((total, line) => total + Number(line.total_refund_amount || 0), 0);
-    const total = detail.status === "CONFIRMED" ? Number(detail.total_refund_amount) : draftTotal;
+    const total = detail.confirmed_at ? Number(detail.total_refund_amount) : draftTotal;
+    const voucherUnused = voucher && voucher.status === "ACTIVE" && Number(voucher.current_balance) === Number(voucher.initial_amount);
+    const voucherBlock = (detail.status === "CONFIRMED" || (detail.status === "CANCELLED" && detail.confirmed_at));
     return (
       <section className="returns-page return-detail">
         <div className="page-title-row">
@@ -251,7 +278,7 @@ export default function ReturnsPage({ onNavigate, onStartExchange, initialSale, 
                   </div>
                 ))}
               </div>
-              {detail.status === "CONFIRMED" && (
+              {voucherBlock && (
                 <div className="return-notice">
                   <Ticket size={18} />
                   {voucher ? (
@@ -262,6 +289,33 @@ export default function ReturnsPage({ onNavigate, onStartExchange, initialSale, 
                     <span>Buono generato per {euro.format(total)}.</span>
                   )}
                 </div>
+              )}
+              {detail.status === "CONFIRMED" && canCancelConfirmed && !detailLoading && (
+                voucherUnused ? (
+                  cancelOpen ? (
+                    <form className="return-cancel-form" onSubmit={cancelConfirmed}>
+                      <p>
+                        Annullando il reso il capo torna a risultare venduto (esce di nuovo dal magazzino), il buono <b>{voucher.code}</b> viene annullato e al cliente tornano gli eventuali punti stornati. Il reso resta nello storico come annullato.
+                      </p>
+                      <label className="return-reason">
+                        <span>Motivo dell'annullamento</span>
+                        <input autoFocus value={cancelReason} maxLength={200} onChange={(event) => setCancelReason(event.target.value)} placeholder="Es. reso registrato per errore" />
+                      </label>
+                      <div className="return-actions">
+                        <button type="button" className="secondary-action return-confirm" disabled={detailBusy} onClick={() => { setCancelOpen(false); setCancelReason(""); setDetailError(""); }}>Indietro</button>
+                        <button type="submit" className="primary-action return-confirm" disabled={detailBusy || !cancelReason.trim()}>{detailBusy ? "Annullamento..." : "Conferma annullamento"}</button>
+                      </div>
+                    </form>
+                  ) : (
+                    <div className="return-actions">
+                      <button className="secondary-action return-confirm" onClick={() => setCancelOpen(true)}><XCircle size={17} /> Annulla reso</button>
+                    </div>
+                  )
+                ) : (
+                  <p className="return-detail-note">
+                    {voucher ? "Questo reso non si può annullare: il buono è già stato usato, anche in parte, oppure non è più attivo." : "Impossibile verificare il buono: annullamento non disponibile."}
+                  </p>
+                )
               )}
               {detail.status === "DRAFT" && (
                 <>

@@ -11,7 +11,7 @@ from loyalty.models import LoyaltyPointMovement
 from loyalty.services import record_point_movement
 from sales.models import Sale, SaleLine
 from vouchers.models import Voucher
-from vouchers.services import issue_voucher
+from vouchers.services import cancel_voucher, issue_voucher
 
 from .models import (
     CustomerReturn,
@@ -263,6 +263,97 @@ def cancel_draft_return(*, customer_return, cancelled_by, reason):
     customer_return.cancelled_at = timezone.now()
     customer_return.cancelled_by = cancelled_by
     customer_return.cancellation_reason = reason.strip()
+    customer_return.save(update_fields=(
+        "status", "cancelled_at", "cancelled_by",
+        "cancellation_reason", "updated_at",
+    ))
+    return customer_return
+
+
+@transaction.atomic
+def cancel_confirmed_return(*, customer_return, cancelled_by, reason, cancelled_at=None):
+    """Annulla un reso già confermato disfacendo ciò che la conferma aveva fatto.
+
+    È consentito solo finché il buono generato non è stato usato: il capo torna
+    a risultare venduto (esce di nuovo dal magazzino), il buono viene annullato
+    e al cliente vengono restituiti i punti stornati. Il reso resta nello
+    storico con stato "Annullato".
+    """
+    customer_return = (
+        CustomerReturn.objects.select_for_update(of=("self",))
+        .select_related("return_voucher", "customer", "location")
+        .get(pk=customer_return.pk)
+    )
+    if customer_return.status != CustomerReturn.Status.CONFIRMED:
+        raise ValidationError("Può essere annullato solo un reso confermato.")
+    reason = (reason or "").strip()
+    if not reason:
+        raise ValidationError("L'annullamento richiede una motivazione.")
+
+    voucher = Voucher.objects.select_for_update().get(
+        pk=customer_return.return_voucher_id
+    )
+    if voucher.status != Voucher.Status.ACTIVE:
+        raise ValidationError(
+            "Il buono del reso non è più attivo: il reso non può essere annullato."
+        )
+    if voucher.current_balance != voucher.initial_amount:
+        raise ValidationError(
+            "Il buono del reso è già stato usato, anche in parte: "
+            "il reso non può essere annullato."
+        )
+
+    cancelled_at = cancelled_at or timezone.now()
+    note = f"Annullamento reso {customer_return.number}: {reason}"
+
+    for line in customer_return.lines.select_related(
+        "original_sale_line", "original_sale_line__variant"
+    ):
+        if not line.restock:
+            continue
+        try:
+            post_stock_movement(
+                variant=line.original_sale_line.variant,
+                location=customer_return.location,
+                movement_type=StockMovement.Type.ADJUSTMENT_OUT,
+                quantity_delta=-line.quantity,
+                occurred_at=cancelled_at,
+                source_type="returns.CustomerReturn",
+                source_id=customer_return.id,
+                reference_number=customer_return.number,
+                notes=note,
+                created_by=cancelled_by,
+            )
+        except ValidationError as exc:
+            raise ValidationError(
+                f"{line.product_name_snapshot} ({line.sku_snapshot}) non è più "
+                "in giacenza, probabilmente è stato rivenduto: "
+                "il reso non può essere annullato."
+            ) from exc
+
+    cancel_voucher(
+        voucher=voucher,
+        cancelled_by=cancelled_by,
+        reason=note[:255],
+        cancelled_at=cancelled_at,
+    )
+
+    if customer_return.points_reversed > 0 and customer_return.customer_id:
+        record_point_movement(
+            customer=customer_return.customer,
+            points_delta=customer_return.points_reversed,
+            movement_type=LoyaltyPointMovement.Type.MANUAL_ADJUSTMENT,
+            source_type="returns.CustomerReturn",
+            source_id=customer_return.id,
+            occurred_at=cancelled_at,
+            notes=f"Ripristino punti per {note}",
+            created_by=cancelled_by,
+        )
+
+    customer_return.status = CustomerReturn.Status.CANCELLED
+    customer_return.cancelled_at = cancelled_at
+    customer_return.cancelled_by = cancelled_by
+    customer_return.cancellation_reason = reason[:255]
     customer_return.save(update_fields=(
         "status", "cancelled_at", "cancelled_by",
         "cancellation_reason", "updated_at",
