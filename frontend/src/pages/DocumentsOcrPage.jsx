@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Eye, FileText, FileUp, LoaderCircle, Plus, ScanText, Search, Trash2, X } from "lucide-react";
 import { openProtectedFile, request } from "../api";
+import { askConfirm, askText } from "../components/Dialogs";
 import PaginatedRows from "../components/PaginatedRows";
 import "../products.css";
 import "./DocumentsOcrPage.css";
@@ -167,7 +168,7 @@ export default function DocumentsOcrPage() {
   const toggleSelectedDocument = (id) => setSelectedDocuments((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   const toggleAllDocuments = () => setSelectedDocuments((current) => current.length === visible.length ? [] : visible.map((document) => document.id));
   async function deleteSelectedDocuments() {
-    if (!selectedDocuments.length || !window.confirm(`Cancellare ${selectedDocuments.length} ${selectedDocuments.length === 1 ? "documento" : "documenti"} selezionati?`)) return;
+    if (!selectedDocuments.length || !(await askConfirm(`Cancellare ${selectedDocuments.length} ${selectedDocuments.length === 1 ? "documento" : "documenti"} selezionati?`))) return;
     setDeletingDocuments(true);
     try {
       const result = await request("/documents/documents/cancel-selected/", { method: "POST", body: JSON.stringify({ document_ids: selectedDocuments }) });
@@ -272,9 +273,9 @@ export default function DocumentsOcrPage() {
     } catch (error) { setReviewError(`Impossibile generare lo SKU: ${error.message}`); } finally { setSkuLoading(false); }
   }
   const removeVariantSize = (itemIndex, variantIndex) => changeReview((current) => ({ ...current, items: current.items.map((item, index) => index === itemIndex ? { ...item, new_variant: { ...item.new_variant, variants: item.new_variant.variants.filter((_, position) => position !== variantIndex) } } : item) }));
-  async function addCategory(itemIndex) { const name = window.prompt("Nome della nuova categoria")?.trim(); if (!name) return; const code = `${name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 20) || "CATEGORIA"}_${Date.now().toString().slice(-5)}`; try { const category = await request("/catalog/categories/", { method: "POST", body: JSON.stringify({ code, name }) }); setCatalog((current) => ({ ...current, categories: [...current.categories, category] })); updateNewVariant(itemIndex, "category_id", category.id); } catch (error) { setReviewError(error.message); } }
-  async function addBrand(itemIndex = null) { const name = window.prompt("Nome della nuova marca")?.trim(); if (!name) return; const code = `${name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 20) || "MARCA"}_${Date.now().toString().slice(-5)}`; try { const brand = await request("/catalog/brands/", { method: "POST", body: JSON.stringify({ code, name }) }); setCatalog((current) => ({ ...current, brands: [...current.brands, brand] })); if (itemIndex === null) updateReview("brand_id", brand.id); else updateNewVariant(itemIndex, "brand_id", brand.id); } catch (error) { setReviewError(error.message); } }
-  async function addColor(itemIndex) { const name = window.prompt("Nome del nuovo colore")?.trim(); if (!name) return; const code = `${name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 20) || "COLORE"}_${Date.now().toString().slice(-5)}`; try { const color = await request("/catalog/colors/", { method: "POST", body: JSON.stringify({ code, name }) }); setCatalog((current) => ({ ...current, colors: [...current.colors, color] })); updateNewVariant(itemIndex, "color_id", color.id); } catch (error) { setReviewError(error.message); } }
+  async function addCategory(itemIndex) { const name = (await askText("Nome della nuova categoria"))?.trim(); if (!name) return; const code = `${name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 20) || "CATEGORIA"}_${Date.now().toString().slice(-5)}`; try { const category = await request("/catalog/categories/", { method: "POST", body: JSON.stringify({ code, name }) }); setCatalog((current) => ({ ...current, categories: [...current.categories, category] })); updateNewVariant(itemIndex, "category_id", category.id); } catch (error) { setReviewError(error.message); } }
+  async function addBrand(itemIndex = null) { const name = (await askText("Nome della nuova marca"))?.trim(); if (!name) return; const code = `${name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 20) || "MARCA"}_${Date.now().toString().slice(-5)}`; try { const brand = await request("/catalog/brands/", { method: "POST", body: JSON.stringify({ code, name }) }); setCatalog((current) => ({ ...current, brands: [...current.brands, brand] })); if (itemIndex === null) updateReview("brand_id", brand.id); else updateNewVariant(itemIndex, "brand_id", brand.id); } catch (error) { setReviewError(error.message); } }
+  async function addColor(itemIndex) { const name = (await askText("Nome del nuovo colore"))?.trim(); if (!name) return; const code = `${name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 20) || "COLORE"}_${Date.now().toString().slice(-5)}`; try { const color = await request("/catalog/colors/", { method: "POST", body: JSON.stringify({ code, name }) }); setCatalog((current) => ({ ...current, colors: [...current.colors, color] })); updateNewVariant(itemIndex, "color_id", color.id); } catch (error) { setReviewError(error.message); } }
   const reviewSubtotal = review?.items.filter((item) => item.accepted).reduce((total, item) => total + lineTotal(item), 0) || 0;
   const reviewTax = reviewSubtotal * amount(review?.tax_rate) / 100;
   const reviewTotal = reviewSubtotal + reviewTax;

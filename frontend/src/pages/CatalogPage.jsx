@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, Download, PackagePlus, Plus, Search, Trash2, X } from "lucide-react";
 import { downloadFile, request } from "../api";
+import { askConfirm, askText } from "../components/Dialogs";
 import PaginationControls from "../components/PaginationControls";
 import "../products.css";
 
@@ -108,7 +109,7 @@ export default function CatalogPage({ canSeeCosts = false }) {
 
   async function quickAdd(kind, target = "form") {
     const labels = { brands: "della marca", categories: "della categoria", colors: "del colore" };
-    const name = window.prompt(`Nome ${labels[kind]}`)?.trim();
+    const name = (await askText(`Nome ${labels[kind]}`))?.trim();
     if (!name) return;
     const code = `${name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 20) || "NUOVO"}_${Date.now().toString().slice(-5)}`;
     try {
@@ -194,7 +195,7 @@ export default function CatalogPage({ canSeeCosts = false }) {
   }
 
   async function archiveBulk() {
-    if (!window.confirm(`Vuoi cancellare ${selected.length} righe dal catalogo? Le varianti saranno archiviate e non più visibili.`)) return;
+    if (!(await askConfirm(`Vuoi cancellare ${selected.length} righe dal catalogo? Le varianti saranno archiviate e non più visibili.`))) return;
     setBulkSaving(true); setError(""); setBulkNotice("");
     try {
       const result = await request("/catalog/variants/bulk-archive/", { method: "POST", body: JSON.stringify({ variants: selected }) });

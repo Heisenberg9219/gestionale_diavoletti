@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { login, logout, refreshSession, request } from "./api";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
+import { DialogHost } from "./components/Dialogs";
 
 const IDLE_TIMEOUT_MINUTES = Number(import.meta.env.VITE_IDLE_TIMEOUT_MINUTES || 20);
 const IDLE_TIMEOUT_MS = IDLE_TIMEOUT_MINUTES * 60 * 1000;
@@ -41,5 +42,8 @@ export default function App() {
   async function handleLogout() {
     try { await logout(); } finally { setUser(null); }
   }
-  return user ? <DashboardPage user={user} onLogout={handleLogout} /> : <LoginPage onLogin={async (email, password) => setUser(await login(email, password))} />;
+  return <>
+    {user ? <DashboardPage user={user} onLogout={handleLogout} /> : <LoginPage onLogin={async (email, password) => setUser(await login(email, password))} />}
+    <DialogHost />
+  </>;
 }

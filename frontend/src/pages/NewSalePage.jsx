@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Banknote, Barcode, CreditCard, Minus, Percent, Plus, Search, ShoppingCart, Trash2, X } from "lucide-react";
 import { request } from "../api";
+import { askConfirm } from "../components/Dialogs";
 import "../new-sale.css";
 
 const euro = new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" });
@@ -74,6 +75,7 @@ export default function NewSalePage({ onNavigate, exchangeCredit, onClearExchang
   const [reservedError, setReservedError] = useState("");
   const [adding, setAdding] = useState(false);
   const addingRef = useRef(false);
+  const [checkingSession, setCheckingSession] = useState(true);
   const inputRef = useRef(null);
 
   useEffect(() => {
@@ -81,7 +83,8 @@ export default function NewSalePage({ onNavigate, exchangeCredit, onClearExchang
       const open = list(sessions).find((item) => item.status === "OPEN");
       setSession(open || null);
       setRegister(list(registers).find((item) => item.id === open?.cash_register) || null);
-    }).catch(() => setMessage("Non è stato possibile verificare la sessione di cassa."));
+    }).catch(() => setMessage("Non è stato possibile verificare la sessione di cassa. Controlla la connessione e ricarica la pagina."))
+      .finally(() => setCheckingSession(false));
   }, []);
 
   async function ensureSale() {
@@ -348,7 +351,7 @@ export default function NewSalePage({ onNavigate, exchangeCredit, onClearExchang
     finally { setPaying(false); }
   }
   async function removePayment(payment) {
-    if (!window.confirm(`Rimuovere il pagamento di ${euro.format(Number(payment.amount))}? Questa operazione rimuove la registrazione; eventuali contanti o pagamenti con carta vanno restituiti separatamente.`)) return;
+    if (!(await askConfirm(`Rimuovere il pagamento di ${euro.format(Number(payment.amount))}? Questa operazione rimuove la registrazione; eventuali contanti o pagamenti con carta vanno restituiti separatamente.`))) return;
     setPaying(true); setPaymentError("");
     try {
       const updated = await request(`/sales/sales/${sale.id}/remove-payment/`, { method: "POST", body: JSON.stringify({ payment: payment.id, reason: "Pagamento rimosso dalla cassa" }) });
@@ -364,7 +367,7 @@ export default function NewSalePage({ onNavigate, exchangeCredit, onClearExchang
       setPaymentError("Rimuovi i pagamenti registrati, poi torna alla vendita e premi Annulla vendita.");
       return;
     }
-    if (!window.confirm("Annullare questa vendita e svuotare il carrello?")) return;
+    if (!(await askConfirm("Annullare questa vendita e svuotare il carrello?"))) return;
     setPaying(true);
     try {
       await request(`/sales/sales/${sale.id}/cancel/`, { method: "POST", body: JSON.stringify({ reason: "Vendita annullata dalla cassa" }) });
@@ -418,8 +421,13 @@ export default function NewSalePage({ onNavigate, exchangeCredit, onClearExchang
     } finally { setPaying(false); }
   }
 
+  if (checkingSession) return <section className="new-sale-empty">
+<Barcode size={28} />
+<h2>Verifica della cassa…</h2>
+</section>;
   if (!session || !register) return <section className="new-sale-empty">
 <Barcode size={28} />
+{message && <p className="pos-message">{message}</p>}
 <h2>Apri prima la cassa</h2>
 <p>Per iniziare una vendita è necessaria una sessione di cassa aperta.</p>
 <button className="primary-action" onClick={() => onNavigate("Cassa")}>Vai alla cassa</button>

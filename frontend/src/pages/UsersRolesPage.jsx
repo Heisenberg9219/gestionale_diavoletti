@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { LockKeyhole, Pencil, Plus, ShieldCheck, Trash2, UserRoundCog, X } from "lucide-react";
 import { request } from "../api";
+import { askConfirm } from "../components/Dialogs";
 import "../products.css";
 
 const list = (data) => data?.results || data || [];
@@ -52,7 +53,7 @@ export default function UsersRolesPage({ currentUser }) {
     catch (error) { notice(error.message, false); }
   }
   async function archiveUsers(targets) {
-    if (!targets.length || !window.confirm("Archiviare gli utenti selezionati?")) return;
+    if (!targets.length || !(await askConfirm("Archiviare gli utenti selezionati?"))) return;
     try { await Promise.all(targets.map((user) => request(`/auth/users/${user.id}/`, { method: "DELETE" }))); setSelected([]); notice("Utenti archiviati correttamente."); await load(); }
     catch (error) { notice(error.message, false); }
   }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ClipboardList, Plus, Search, Trash2 } from "lucide-react";
 import { request } from "../api";
+import { askText } from "../components/Dialogs";
 import "../products.css";
 
 const list = (data) => data?.results || data || [];
@@ -43,7 +44,7 @@ export default function ReordersPage() {
     catch (error) { setMessage(error.message); }
   }
   async function removeItem(item) {
-    const reason = window.prompt("Motivo della rimozione:", "Non necessario");
+    const reason = (await askText("Motivo della rimozione:", "Non necessario"));
     if (!reason) return;
     try { await request(`/reorders/items/${item.id}/remove/`, { method: "POST", body: JSON.stringify({ reason }) }); load(); }
     catch (error) { setMessage(error.message); }

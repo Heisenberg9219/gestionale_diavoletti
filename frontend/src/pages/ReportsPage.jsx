@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { BarChart3, Download, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { downloadFile, request } from "../api";
+import { askConfirm } from "../components/Dialogs";
 import "../products.css";
 
 const list = (data) => data?.results || data || [];
@@ -63,7 +64,7 @@ export default function ReportsPage() {
     catch (error) { notice(error.message, false); }
   }
   async function remove(widget) {
-    if (!window.confirm(`Eliminare il report “${widget.title}”?`)) return;
+    if (!(await askConfirm(`Eliminare il report “${widget.title}”?`))) return;
     try { await request(`/reporting/widgets/${widget.id}/`, { method: "DELETE" }); notice("Report eliminato correttamente."); await load(); }
     catch (error) { notice(error.message, false); }
   }

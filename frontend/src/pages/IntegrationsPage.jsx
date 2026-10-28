@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, CircleAlert, Link2, Plus, Store, Trash2, X } from "lucide-react";
 import { request } from "../api";
+import { askConfirm } from "../components/Dialogs";
 import "../products.css";
 
 const list = (data) => data?.results || data || [];
@@ -59,7 +60,7 @@ export default function IntegrationsPage() {
   }
 
   async function removeConnection(connection) {
-    if (!window.confirm(`Eliminare l'integrazione “${connection.name}”?`)) return;
+    if (!(await askConfirm(`Eliminare l'integrazione “${connection.name}”?`))) return;
     try { await request(`/integrations/connections/${connection.id}/`, { method: "DELETE" }); notice("Integrazione eliminata correttamente."); await load(); }
     catch (error) { notice(error.message, false); }
   }
