@@ -556,7 +556,7 @@ def reorder_viewset(base):
         supplier=request.data.get("supplier")
         obj=add_to_reorder_list(variant=get_object_or_404(ProductVariant,pk=required(request.data,"variant")),location=get_object_or_404(Location,pk=required(request.data,"location")),added_by=request.user,requested_quantity=request.data.get("requested_quantity"),supplier=get_object_or_404(Supplier,pk=supplier) if supplier else None,reason=request.data.get("reason",""),notes=request.data.get("notes",""))
         return Response(self.get_serializer(obj).data,status=201)
-    @action(detail=True,methods=("post",))
+    @action(detail=True,methods=("post",),url_path="update-pending")
     def update_pending(self,request,pk=None):
         supplier=request.data.get("supplier")
         return Response(self.get_serializer(update_pending_reorder(reorder_item=self.get_object(),requested_quantity=required(request.data,"requested_quantity"),updated_by=request.user,supplier=get_object_or_404(Supplier,pk=supplier) if supplier else None,notes=request.data.get("notes"))).data)

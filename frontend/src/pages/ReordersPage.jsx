@@ -39,7 +39,7 @@ export default function ReordersPage() {
     catch (error) { setMessage(error.message); }
   }
   async function addFromStock(item) {
-    try { await request("/reorders/items/", { method: "POST", body: JSON.stringify({ variant: item.variant, location: item.location, requested_quantity: 1, reason: "Inserimento manuale", notifications_enabled: notificationsEnabled }) }); if (notificationsEnabled) await request("/reorders/items/refresh-notifications/", { method: "POST", body: JSON.stringify({}) }); setAdding(false); setNotificationsEnabled(false); setStockMatches([]); setQuery(""); load(); }
+    try { await request("/reorders/items/add/", { method: "POST", body: JSON.stringify({ variant: item.variant, location: item.location, requested_quantity: 1, reason: "Inserimento manuale", notifications_enabled: notificationsEnabled }) }); if (notificationsEnabled) await request("/reorders/items/refresh-notifications/", { method: "POST", body: JSON.stringify({}) }); setAdding(false); setNotificationsEnabled(false); setStockMatches([]); setQuery(""); load(); }
     catch (error) { setMessage(error.message); }
   }
   async function removeItem(item) {
