@@ -31,7 +31,9 @@ export function refreshSession() {
   if (!refreshInFlight) {
     refreshInFlight = performRefresh()
       .catch(() => false)
-      .finally(() => { refreshInFlight = null; });
+      .finally(() => {
+        refreshInFlight = null;
+      });
   }
   return refreshInFlight;
 }
@@ -59,10 +61,12 @@ export async function request(path, options = {}) {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     const details = body.error?.details;
-    const readable = details && (typeof details === "string" ? details : Object.values(details).flat().join(" "));
-    const fallback = response.status >= 500
-      ? "Errore del server durante l'operazione. Riprova dopo aver aggiornato il backend."
-      : `Operazione non riuscita (HTTP ${response.status}).`;
+    const readable =
+      details && (typeof details === "string" ? details : Object.values(details).flat().join(" "));
+    const fallback =
+      response.status >= 500
+        ? "Errore del server durante l'operazione. Riprova dopo aver aggiornato il backend."
+        : `Operazione non riuscita (HTTP ${response.status}).`;
     throw new Error(readable || body.error?.message || body.detail || fallback);
   }
   return response.status === 204 ? null : response.json();

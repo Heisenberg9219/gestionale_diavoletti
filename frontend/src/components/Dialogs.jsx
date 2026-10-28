@@ -11,7 +11,11 @@ function openDialog(options) {
   return new Promise((resolve) => {
     if (!showDialog) {
       // Ripiego se l'host non è montato: comportamento di prima.
-      resolve(options.kind === "text" ? window.prompt(options.message, options.defaultValue) : window.confirm(options.message));
+      resolve(
+        options.kind === "text"
+          ? window.prompt(options.message, options.defaultValue)
+          : window.confirm(options.message),
+      );
       return;
     }
     showDialog({ ...options, resolve });
@@ -20,7 +24,11 @@ function openDialog(options) {
 
 // Restituisce il testo inserito, oppure null se l'utente annulla.
 export function askText(message, defaultValue = "") {
-  return openDialog({ kind: "text", message, defaultValue: defaultValue == null ? "" : String(defaultValue) });
+  return openDialog({
+    kind: "text",
+    message,
+    defaultValue: defaultValue == null ? "" : String(defaultValue),
+  });
 }
 
 // Restituisce true se l'utente conferma, false altrimenti.
@@ -42,7 +50,9 @@ export function DialogHost() {
       setValue(options.defaultValue ?? "");
       setCurrent(options);
     };
-    return () => { showDialog = null; };
+    return () => {
+      showDialog = null;
+    };
   }, []);
 
   if (!current) return null;
@@ -59,13 +69,38 @@ export function DialogHost() {
   }
 
   return (
-    <div className="app-dialog-layer" onMouseDown={(event) => { if (event.target === event.currentTarget) cancel(); }}>
-      <form className="app-dialog" role="dialog" aria-modal="true" aria-label={current.message} onSubmit={submit} onKeyDown={(event) => { if (event.key === "Escape") cancel(); }}>
+    <div
+      className="app-dialog-layer"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) cancel();
+      }}
+    >
+      <form
+        className="app-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={current.message}
+        onSubmit={submit}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") cancel();
+        }}
+      >
         <p>{current.message}</p>
-        {current.kind === "text" && <input autoFocus value={value} onChange={(event) => setValue(event.target.value)} onFocus={(event) => event.target.select()} />}
+        {current.kind === "text" && (
+          <input
+            autoFocus
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            onFocus={(event) => event.target.select()}
+          />
+        )}
         <div className="app-dialog-actions">
-          <button type="button" className="secondary-action" onClick={cancel}>Annulla</button>
-          <button type="submit" className="primary-action" autoFocus={current.kind === "confirm"}>{current.kind === "text" ? "OK" : current.confirmLabel}</button>
+          <button type="button" className="secondary-action" onClick={cancel}>
+            Annulla
+          </button>
+          <button type="submit" className="primary-action" autoFocus={current.kind === "confirm"}>
+            {current.kind === "text" ? "OK" : current.confirmLabel}
+          </button>
         </div>
       </form>
     </div>

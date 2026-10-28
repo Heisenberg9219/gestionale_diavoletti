@@ -8,7 +8,7 @@
 
   .logo-stage img {
     max-height: 135px;
-    filter: drop-shadow(0 12px 14px rgba(33, 19, 22, .18));
+    filter: drop-shadow(0 12px 14px rgba(33, 19, 22, 0.18));
   }
 
   .login-panel {

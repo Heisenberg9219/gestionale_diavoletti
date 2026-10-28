@@ -7,7 +7,13 @@ import "../returns.css";
 const euro = new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" });
 const list = (payload) => payload?.results || payload || [];
 const dateFormat = new Intl.DateTimeFormat("it-IT", { day: "2-digit", month: "short", year: "numeric" });
-const dateTimeFormat = new Intl.DateTimeFormat("it-IT", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+const dateTimeFormat = new Intl.DateTimeFormat("it-IT", {
+  day: "2-digit",
+  month: "short",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
 const STATUS_LABELS = { CONFIRMED: "Confermato", CANCELLED: "Annullato", DRAFT: "Bozza" };
 const VOUCHER_STATUS = { ACTIVE: "Attivo", EXHAUSTED: "Esaurito", CANCELLED: "Annullato" };
 
@@ -17,10 +23,18 @@ function lineDetails(line) {
     line?.size_snapshot && `Taglia ${line.size_snapshot}`,
     line?.color_snapshot && `Colore ${line.color_snapshot}`,
     line?.sku_snapshot && `Cod. ${line.sku_snapshot}`,
-  ].filter(Boolean).join(" · ");
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
-export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, onStartExchange, initialSale, onClearInitialSale }) {
+export default function ReturnsPage({
+  canCancelConfirmed = false,
+  onNavigate,
+  onStartExchange,
+  initialSale,
+  onClearInitialSale,
+}) {
   const [returns, setReturns] = useState([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -47,7 +61,10 @@ export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, on
   const loadReturns = () => {
     setLoading(true);
     request(`/returns/returns/?search=${encodeURIComponent(search)}&page_size=200&ordering=-created_at`)
-      .then((payload) => { setReturns(list(payload)); setError(""); })
+      .then((payload) => {
+        setReturns(list(payload));
+        setError("");
+      })
       .catch(() => setError("Non è stato possibile caricare lo storico resi."))
       .finally(() => setLoading(false));
   };
@@ -67,7 +84,9 @@ export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, on
     if (!saleQuery.trim()) return;
     setError("");
     try {
-      setSales(list(await request(`/sales/sales/?status=CONFIRMED&search=${encodeURIComponent(saleQuery.trim())}`)));
+      setSales(
+        list(await request(`/sales/sales/?status=CONFIRMED&search=${encodeURIComponent(saleQuery.trim())}`)),
+      );
     } catch {
       setError("Ricerca vendite non disponibile.");
     }
@@ -80,19 +99,24 @@ export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, on
     setSelectedLines({});
     setSales([]);
     setReturnable({});
-    const entries = await Promise.all((sale.lines || []).map(async (line) => {
-      try {
-        const result = await request(`/sales/lines/${line.id}/returnable-quantity/`);
-        return [line.id, Number(result.quantity)];
-      } catch {
-        return [line.id, Number(line.quantity)];
-      }
-    }));
+    const entries = await Promise.all(
+      (sale.lines || []).map(async (line) => {
+        try {
+          const result = await request(`/sales/lines/${line.id}/returnable-quantity/`);
+          return [line.id, Number(result.quantity)];
+        } catch {
+          return [line.id, Number(line.quantity)];
+        }
+      }),
+    );
     setReturnable(Object.fromEntries(entries));
   }
 
   function setLine(line, checked) {
-    setSelectedLines((current) => ({ ...current, [line.id]: checked ? { quantity: 1, restock: true } : undefined }));
+    setSelectedLines((current) => ({
+      ...current,
+      [line.id]: checked ? { quantity: 1, restock: true } : undefined,
+    }));
   }
 
   function setLineQuantity(line, quantity) {
@@ -103,7 +127,12 @@ export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, on
     const voucher = confirmed.return_voucher
       ? await request(`/vouchers/vouchers/${confirmed.return_voucher}/`).catch(() => null)
       : null;
-    return { voucherId: confirmed.return_voucher, code: voucher?.code || "", amount: Number(confirmed.total_refund_amount), returnNumber: confirmed.number };
+    return {
+      voucherId: confirmed.return_voucher,
+      code: voucher?.code || "",
+      amount: Number(confirmed.total_refund_amount),
+      returnNumber: confirmed.number,
+    };
   }
 
   async function confirmReturn(mode = "voucher") {
@@ -114,9 +143,19 @@ export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, on
     setError("");
     let draft = null;
     try {
-      draft = await request("/returns/returns/create-draft/", { method: "POST", body: JSON.stringify({ original_sale: selectedSale.id, reason }) });
+      draft = await request("/returns/returns/create-draft/", {
+        method: "POST",
+        body: JSON.stringify({ original_sale: selectedSale.id, reason }),
+      });
       for (const [line, value] of lines) {
-        await request(`/returns/returns/${draft.id}/set-line/`, { method: "POST", body: JSON.stringify({ original_sale_line: line, quantity: value.quantity, restock: value.restock }) });
+        await request(`/returns/returns/${draft.id}/set-line/`, {
+          method: "POST",
+          body: JSON.stringify({
+            original_sale_line: line,
+            quantity: value.quantity,
+            restock: value.restock,
+          }),
+        });
       }
       const confirmed = await request(`/returns/returns/${draft.id}/confirm/`, { method: "POST" });
       draft = null;
@@ -132,7 +171,10 @@ export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, on
       // Se qualcosa va storto a metà, la bozza appena creata viene annullata
       // per non lasciare resi incompleti nello storico.
       if (draft) {
-        await request(`/returns/returns/${draft.id}/cancel/`, { method: "POST", body: JSON.stringify({ reason: `Annullato automaticamente: ${err.message}`.slice(0, 250) }) }).catch(() => {});
+        await request(`/returns/returns/${draft.id}/cancel/`, {
+          method: "POST",
+          body: JSON.stringify({ reason: `Annullato automaticamente: ${err.message}`.slice(0, 250) }),
+        }).catch(() => {});
       }
       setError(err.message);
     } finally {
@@ -199,7 +241,10 @@ export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, on
     setDetailBusy(true);
     setDetailError("");
     try {
-      const cancelled = await request(`/returns/returns/${detail.id}/cancel/`, { method: "POST", body: JSON.stringify({ reason: "Bozza annullata dal negozio" }) });
+      const cancelled = await request(`/returns/returns/${detail.id}/cancel/`, {
+        method: "POST",
+        body: JSON.stringify({ reason: "Bozza annullata dal negozio" }),
+      });
       loadReturns();
       await openDetail(cancelled);
     } catch (err) {
@@ -218,7 +263,10 @@ export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, on
     setDetailBusy(true);
     setDetailError("");
     try {
-      const cancelled = await request(`/returns/returns/${detail.id}/cancel/`, { method: "POST", body: JSON.stringify({ reason: cancelReason.trim() }) });
+      const cancelled = await request(`/returns/returns/${detail.id}/cancel/`, {
+        method: "POST",
+        body: JSON.stringify({ reason: cancelReason.trim() }),
+      });
       setCancelOpen(false);
       setCancelReason("");
       loadReturns();
@@ -238,8 +286,12 @@ export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, on
     const voucher = detailData?.voucher;
     const draftTotal = lines.reduce((total, line) => total + Number(line.total_refund_amount || 0), 0);
     const total = detail.confirmed_at ? Number(detail.total_refund_amount) : draftTotal;
-    const voucherUnused = voucher && voucher.status === "ACTIVE" && Number(voucher.current_balance) === Number(voucher.initial_amount);
-    const voucherBlock = (detail.status === "CONFIRMED" || (detail.status === "CANCELLED" && detail.confirmed_at));
+    const voucherUnused =
+      voucher &&
+      voucher.status === "ACTIVE" &&
+      Number(voucher.current_balance) === Number(voucher.initial_amount);
+    const voucherBlock =
+      detail.status === "CONFIRMED" || (detail.status === "CANCELLED" && detail.confirmed_at);
     return (
       <section className="returns-page return-detail">
         <div className="page-title-row">
@@ -247,32 +299,68 @@ export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, on
             <p className="eyebrow">Operatività · Resi</p>
             <h2>{detail.number || "Reso in bozza"}</h2>
             <span>
-              {detailData?.sale ? `Scontrino ${detailData.sale.number}` : "Scontrino collegato"} · creato il {dateTimeFormat.format(new Date(detail.created_at))}
+              {detailData?.sale ? `Scontrino ${detailData.sale.number}` : "Scontrino collegato"} · creato il{" "}
+              {dateTimeFormat.format(new Date(detail.created_at))}
             </span>
           </div>
-          <button className="secondary-action return-back" onClick={closeDetail}><ArrowLeft size={17} /> Torna allo storico</button>
+          <button className="secondary-action return-back" onClick={closeDetail}>
+            <ArrowLeft size={17} /> Torna allo storico
+          </button>
         </div>
         <section className="return-lines-card">
           <div className="return-detail-summary">
-            <div><span>Stato</span><strong className={`return-status ${detail.status.toLowerCase()}`}>{STATUS_LABELS[detail.status]}</strong></div>
-            <div><span>Motivo</span><strong>{detail.reason || "—"}</strong></div>
-            <div><span>Valore reso</span><strong>{euro.format(total)}</strong></div>
-            {detail.confirmed_at && <div><span>Confermato il</span><strong>{dateTimeFormat.format(new Date(detail.confirmed_at))}</strong></div>}
-            {detail.cancelled_at && <div><span>Annullato il</span><strong>{dateTimeFormat.format(new Date(detail.cancelled_at))}</strong></div>}
+            <div>
+              <span>Stato</span>
+              <strong className={`return-status ${detail.status.toLowerCase()}`}>
+                {STATUS_LABELS[detail.status]}
+              </strong>
+            </div>
+            <div>
+              <span>Motivo</span>
+              <strong>{detail.reason || "—"}</strong>
+            </div>
+            <div>
+              <span>Valore reso</span>
+              <strong>{euro.format(total)}</strong>
+            </div>
+            {detail.confirmed_at && (
+              <div>
+                <span>Confermato il</span>
+                <strong>{dateTimeFormat.format(new Date(detail.confirmed_at))}</strong>
+              </div>
+            )}
+            {detail.cancelled_at && (
+              <div>
+                <span>Annullato il</span>
+                <strong>{dateTimeFormat.format(new Date(detail.cancelled_at))}</strong>
+              </div>
+            )}
           </div>
-          {detail.cancellation_reason && <p className="return-detail-note">Motivo annullamento: {detail.cancellation_reason}</p>}
+          {detail.cancellation_reason && (
+            <p className="return-detail-note">Motivo annullamento: {detail.cancellation_reason}</p>
+          )}
           {detailLoading && <p className="return-detail-note">Caricamento dettaglio...</p>}
           {!detailLoading && (
             <>
               <h3 className="return-detail-title">Articoli restituiti</h3>
-              {!lines.length && <p className="return-detail-note">Nessun articolo registrato in questo reso.</p>}
+              {!lines.length && (
+                <p className="return-detail-note">Nessun articolo registrato in questo reso.</p>
+              )}
               <div className="return-lines">
                 {lines.map((line) => (
                   <div className="return-line" key={line.id}>
                     <div>
                       <strong>{line.product_name_snapshot}</strong>
-                      <span>{lineDetails({ ...saleLines[line.original_sale_line], sku_snapshot: line.sku_snapshot })}</span>
-                      <span>Quantità resa: {line.quantity}{line.restock ? " · rientrato in magazzino" : ""}</span>
+                      <span>
+                        {lineDetails({
+                          ...saleLines[line.original_sale_line],
+                          sku_snapshot: line.sku_snapshot,
+                        })}
+                      </span>
+                      <span>
+                        Quantità resa: {line.quantity}
+                        {line.restock ? " · rientrato in magazzino" : ""}
+                      </span>
                     </div>
                     <b>{euro.format(Number(line.total_refund_amount))}</b>
                   </div>
@@ -283,49 +371,97 @@ export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, on
                   <Ticket size={18} />
                   {voucher ? (
                     <span>
-                      Buono <b>{voucher.code}</b> · saldo {euro.format(Number(voucher.current_balance))} di {euro.format(Number(voucher.initial_amount))} · {VOUCHER_STATUS[voucher.status] || voucher.status} · scade il {dateFormat.format(new Date(voucher.expires_at))}
+                      Buono <b>{voucher.code}</b> · saldo {euro.format(Number(voucher.current_balance))} di{" "}
+                      {euro.format(Number(voucher.initial_amount))} ·{" "}
+                      {VOUCHER_STATUS[voucher.status] || voucher.status} · scade il{" "}
+                      {dateFormat.format(new Date(voucher.expires_at))}
                     </span>
                   ) : (
                     <span>Buono generato per {euro.format(total)}.</span>
                   )}
                 </div>
               )}
-              {detail.status === "CONFIRMED" && canCancelConfirmed && !detailLoading && (
-                voucherUnused ? (
+              {detail.status === "CONFIRMED" &&
+                canCancelConfirmed &&
+                !detailLoading &&
+                (voucherUnused ? (
                   cancelOpen ? (
                     <form className="return-cancel-form" onSubmit={cancelConfirmed}>
                       <p>
-                        Annullando il reso il capo torna a risultare venduto (esce di nuovo dal magazzino), il buono <b>{voucher.code}</b> viene annullato e al cliente tornano gli eventuali punti stornati. Il reso resta nello storico come annullato.
+                        Annullando il reso il capo torna a risultare venduto (esce di nuovo dal magazzino), il
+                        buono <b>{voucher.code}</b> viene annullato e al cliente tornano gli eventuali punti
+                        stornati. Il reso resta nello storico come annullato.
                       </p>
                       <label className="return-reason">
                         <span>Motivo dell'annullamento</span>
-                        <input autoFocus value={cancelReason} maxLength={200} onChange={(event) => setCancelReason(event.target.value)} placeholder="Es. reso registrato per errore" />
+                        <input
+                          autoFocus
+                          value={cancelReason}
+                          maxLength={200}
+                          onChange={(event) => setCancelReason(event.target.value)}
+                          placeholder="Es. reso registrato per errore"
+                        />
                       </label>
                       <div className="return-actions">
-                        <button type="button" className="secondary-action return-confirm" disabled={detailBusy} onClick={() => { setCancelOpen(false); setCancelReason(""); setDetailError(""); }}>Indietro</button>
-                        <button type="submit" className="primary-action return-confirm" disabled={detailBusy || !cancelReason.trim()}>{detailBusy ? "Annullamento..." : "Conferma annullamento"}</button>
+                        <button
+                          type="button"
+                          className="secondary-action return-confirm"
+                          disabled={detailBusy}
+                          onClick={() => {
+                            setCancelOpen(false);
+                            setCancelReason("");
+                            setDetailError("");
+                          }}
+                        >
+                          Indietro
+                        </button>
+                        <button
+                          type="submit"
+                          className="primary-action return-confirm"
+                          disabled={detailBusy || !cancelReason.trim()}
+                        >
+                          {detailBusy ? "Annullamento..." : "Conferma annullamento"}
+                        </button>
                       </div>
                     </form>
                   ) : (
                     <div className="return-actions">
-                      <button className="secondary-action return-confirm" onClick={() => setCancelOpen(true)}><XCircle size={17} /> Annulla reso</button>
+                      <button className="secondary-action return-confirm" onClick={() => setCancelOpen(true)}>
+                        <XCircle size={17} /> Annulla reso
+                      </button>
                     </div>
                   )
                 ) : (
                   <p className="return-detail-note">
-                    {voucher ? "Questo reso non si può annullare: il buono è già stato usato, anche in parte, oppure non è più attivo." : "Impossibile verificare il buono: annullamento non disponibile."}
+                    {voucher
+                      ? "Questo reso non si può annullare: il buono è già stato usato, anche in parte, oppure non è più attivo."
+                      : "Impossibile verificare il buono: annullamento non disponibile."}
                   </p>
-                )
-              )}
+                ))}
               {detail.status === "DRAFT" && (
                 <>
                   <div className="return-notice">
                     <Ticket size={18} />
-                    <span>Questo reso non è stato concluso: il magazzino e il buono non sono ancora stati registrati. Puoi completarlo ora oppure annullare la bozza.</span>
+                    <span>
+                      Questo reso non è stato concluso: il magazzino e il buono non sono ancora stati
+                      registrati. Puoi completarlo ora oppure annullare la bozza.
+                    </span>
                   </div>
                   <div className="return-actions">
-                    <button className="secondary-action return-confirm" disabled={detailBusy} onClick={cancelDraft}><XCircle size={17} /> Annulla bozza</button>
-                    <button className="primary-action return-confirm" disabled={detailBusy || !lines.length} onClick={confirmDraft}>{detailBusy ? "Registrazione..." : "Completa reso e genera buono"}</button>
+                    <button
+                      className="secondary-action return-confirm"
+                      disabled={detailBusy}
+                      onClick={cancelDraft}
+                    >
+                      <XCircle size={17} /> Annulla bozza
+                    </button>
+                    <button
+                      className="primary-action return-confirm"
+                      disabled={detailBusy || !lines.length}
+                      onClick={confirmDraft}
+                    >
+                      {detailBusy ? "Registrazione..." : "Completa reso e genera buono"}
+                    </button>
                   </div>
                 </>
               )}
@@ -347,11 +483,28 @@ export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, on
             <h2>{completed.number}</h2>
             <p>
               Il buono di {euro.format(Number(completed.total_refund_amount))} è stato generato
-              {completed.voucher_code ? <> con codice <strong>{completed.voucher_code}</strong></> : ""}: consegnalo al cliente.
+              {completed.voucher_code ? (
+                <>
+                  {" "}
+                  con codice <strong>{completed.voucher_code}</strong>
+                </>
+              ) : (
+                ""
+              )}
+              : consegnalo al cliente.
             </p>
             <div>
-              <button className="secondary-action" onClick={resetWizard}>Chiudi</button>
-              <button className="primary-action" onClick={() => (onStartExchange && completed.credit?.code ? onStartExchange(completed.credit) : onNavigate("Nuova vendita"))}>
+              <button className="secondary-action" onClick={resetWizard}>
+                Chiudi
+              </button>
+              <button
+                className="primary-action"
+                onClick={() =>
+                  onStartExchange && completed.credit?.code
+                    ? onStartExchange(completed.credit)
+                    : onNavigate("Nuova vendita")
+                }
+              >
                 <RefreshCcw size={17} /> Avvia un cambio
               </button>
             </div>
@@ -367,7 +520,9 @@ export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, on
             <h2>Apri un nuovo reso</h2>
             <span>Cerca la vendita originale, poi seleziona gli articoli restituiti.</span>
           </div>
-          <button className="secondary-action return-back" onClick={resetWizard}><ArrowLeft size={17} /> Torna allo storico</button>
+          <button className="secondary-action return-back" onClick={resetWizard}>
+            <ArrowLeft size={17} /> Torna allo storico
+          </button>
         </div>
         {!selectedSale ? (
           <section className="return-find-sale">
@@ -377,7 +532,12 @@ export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, on
               <p>Cerca per scontrino, tessera, cliente, figlio, articolo, marca, SKU o barcode.</p>
             </div>
             <form onSubmit={findSales}>
-              <input autoFocus value={saleQuery} onChange={(event) => setSaleQuery(event.target.value)} placeholder="Cerca vendita o articolo" />
+              <input
+                autoFocus
+                value={saleQuery}
+                onChange={(event) => setSaleQuery(event.target.value)}
+                placeholder="Cerca vendita o articolo"
+              />
               <button className="primary-action">Cerca</button>
             </form>
             {error && <p className="return-error">{error}</p>}
@@ -387,7 +547,10 @@ export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, on
                   <button key={sale.id} onClick={() => selectSale(sale)}>
                     <div>
                       <strong>{sale.number}</strong>
-                      <span>{sale.customer_name || "Vendita banco"} · {dateFormat.format(new Date(sale.confirmed_at || sale.opened_at))}</span>
+                      <span>
+                        {sale.customer_name || "Vendita banco"} ·{" "}
+                        {dateFormat.format(new Date(sale.confirmed_at || sale.opened_at))}
+                      </span>
                     </div>
                     <b>{euro.format(Number(sale.final_total_amount))}</b>
                   </button>
@@ -401,9 +564,14 @@ export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, on
               <div>
                 <p className="eyebrow">Vendita selezionata</p>
                 <h3>{selectedSale.number}</h3>
-                <span>{selectedSale.customer_name || "Vendita senza cliente"} · {dateFormat.format(new Date(selectedSale.confirmed_at || selectedSale.opened_at))}</span>
+                <span>
+                  {selectedSale.customer_name || "Vendita senza cliente"} ·{" "}
+                  {dateFormat.format(new Date(selectedSale.confirmed_at || selectedSale.opened_at))}
+                </span>
               </div>
-              <button className="secondary-action" onClick={() => setSelectedSale(null)}>Cambia vendita</button>
+              <button className="secondary-action" onClick={() => setSelectedSale(null)}>
+                Cambia vendita
+              </button>
             </div>
             <label className="return-reason">
               <span>Motivo del reso</span>
@@ -416,19 +584,35 @@ export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, on
                 const selected = selectedLines[line.id];
                 return (
                   <label key={line.id} className={exhausted ? "is-disabled" : ""}>
-                    <input type="checkbox" disabled={exhausted} checked={Boolean(selected)} onChange={(event) => setLine(line, event.target.checked)} />
+                    <input
+                      type="checkbox"
+                      disabled={exhausted}
+                      checked={Boolean(selected)}
+                      onChange={(event) => setLine(line, event.target.checked)}
+                    />
                     <div>
                       <strong>{line.product_name_snapshot}</strong>
                       <span>{lineDetails(line)}</span>
                       <span>
                         Acquistati: {line.quantity}
-                        {exhausted ? " · già restituito" : available !== undefined && available < line.quantity ? ` · restituibili: ${available}` : ""}
+                        {exhausted
+                          ? " · già restituito"
+                          : available !== undefined && available < line.quantity
+                            ? ` · restituibili: ${available}`
+                            : ""}
                       </span>
                       {selected && available > 1 && (
                         <span className="return-line-quantity">
                           Quantità da rendere
-                          <select value={selected.quantity} onChange={(event) => setLineQuantity(line, Number(event.target.value))}>
-                            {Array.from({ length: available }, (_, index) => index + 1).map((value) => <option key={value} value={value}>{value}</option>)}
+                          <select
+                            value={selected.quantity}
+                            onChange={(event) => setLineQuantity(line, Number(event.target.value))}
+                          >
+                            {Array.from({ length: available }, (_, index) => index + 1).map((value) => (
+                              <option key={value} value={value}>
+                                {value}
+                              </option>
+                            ))}
                           </select>
                         </span>
                       )}
@@ -441,13 +625,28 @@ export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, on
             <div className="return-notice">
               <Ticket size={18} />
               <span>
-                <b>Il cliente non prende niente:</b> conferma e genera il buono da consegnargli. <b>Cambio</b> (altra taglia o altro articolo): si apre la nuova vendita con il credito già applicato al pagamento; se il nuovo articolo costa di più si paga la differenza, se costa di meno la differenza resta sul buono.
+                <b>Il cliente non prende niente:</b> conferma e genera il buono da consegnargli. <b>Cambio</b>{" "}
+                (altra taglia o altro articolo): si apre la nuova vendita con il credito già applicato al
+                pagamento; se il nuovo articolo costa di più si paga la differenza, se costa di meno la
+                differenza resta sul buono.
               </span>
             </div>
             {error && <p className="return-error">{error}</p>}
             <div className="return-actions">
-              <button className="secondary-action return-confirm" disabled={saving} onClick={() => confirmReturn("voucher")}>{saving ? "Registrazione..." : "Conferma reso e genera buono"}</button>
-              <button className="primary-action return-confirm" disabled={saving} onClick={() => confirmReturn("exchange")}><RefreshCcw size={17} /> {saving ? "Registrazione..." : "Conferma e fai il cambio"}</button>
+              <button
+                className="secondary-action return-confirm"
+                disabled={saving}
+                onClick={() => confirmReturn("voucher")}
+              >
+                {saving ? "Registrazione..." : "Conferma reso e genera buono"}
+              </button>
+              <button
+                className="primary-action return-confirm"
+                disabled={saving}
+                onClick={() => confirmReturn("exchange")}
+              >
+                <RefreshCcw size={17} /> {saving ? "Registrazione..." : "Conferma e fai il cambio"}
+              </button>
             </div>
           </section>
         )}
@@ -461,31 +660,56 @@ export default function ReturnsPage({ canCancelConfirmed = false, onNavigate, on
         <div>
           <p className="eyebrow">Operatività</p>
           <h2>Resi</h2>
-          <span>Consulta lo storico dei resi e apri un reso per vederne il dettaglio. Per aprirne uno nuovo, seleziona una vendita dallo Storico vendite.</span>
+          <span>
+            Consulta lo storico dei resi e apri un reso per vederne il dettaglio. Per aprirne uno nuovo,
+            seleziona una vendita dallo Storico vendite.
+          </span>
         </div>
       </div>
-      <form className="returns-search" onSubmit={(event) => { event.preventDefault(); loadReturns(); }}>
+      <form
+        className="returns-search"
+        onSubmit={(event) => {
+          event.preventDefault();
+          loadReturns();
+        }}
+      >
         <Search size={18} />
-        <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Cerca reso, scontrino, cliente o articolo" />
+        <input
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Cerca reso, scontrino, cliente o articolo"
+        />
         <button>Ricerca</button>
       </form>
       <article className="returns-list">
-        <div className="returns-heading"><span>Reso</span><span>Stato</span><span>Credito</span></div>
+        <div className="returns-heading">
+          <span>Reso</span>
+          <span>Stato</span>
+          <span>Credito</span>
+        </div>
         {loading && <p>Caricamento resi...</p>}
         {error && <p className="return-error">{error}</p>}
         {!loading && !error && !returns.length && <p>Nessun reso corrisponde alla ricerca.</p>}
         {!loading && !error && (
           <PaginatedRows items={returns} resetKey={search}>
-            {(rows) => rows.map((item) => (
-              <button type="button" className="return-row" key={item.id} onClick={() => openDetail(item)}>
-                <div>
-                  <strong>{item.number || "Reso in bozza"}</strong>
-                  <span>{item.reason || "Reso"} · {dateFormat.format(new Date(item.created_at))}</span>
-                </div>
-                <span className={`return-status ${item.status.toLowerCase()}`}>{STATUS_LABELS[item.status]}</span>
-                <strong>{item.status === "CONFIRMED" ? euro.format(Number(item.total_refund_amount || 0)) : "—"}</strong>
-              </button>
-            ))}
+            {(rows) =>
+              rows.map((item) => (
+                <button type="button" className="return-row" key={item.id} onClick={() => openDetail(item)}>
+                  <div>
+                    <strong>{item.number || "Reso in bozza"}</strong>
+                    <span>
+                      {item.reason || "Reso"} · {dateFormat.format(new Date(item.created_at))}
+                    </span>
+                  </div>
+                  <span className={`return-status ${item.status.toLowerCase()}`}>
+                    {STATUS_LABELS[item.status]}
+                  </span>
+                  <strong>
+                    {item.status === "CONFIRMED" ? euro.format(Number(item.total_refund_amount || 0)) : "—"}
+                  </strong>
+                </button>
+              ))
+            }
           </PaginatedRows>
         )}
       </article>

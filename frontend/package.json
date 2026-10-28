@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "format": "npx --yes prettier@3.8.1 --write \"src/**/*.{js,jsx,css}\" eslint.config.js vite.config.js",
+    "lint": "npx --yes eslint@10.1.0 src vite.config.js && npx --yes prettier@3.8.1 --check \"src/**/*.{js,jsx,css}\" eslint.config.js vite.config.js"
   },
   "dependencies": {
     "@vitejs/plugin-react": "6.1.1",

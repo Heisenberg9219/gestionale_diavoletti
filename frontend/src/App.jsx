@@ -10,7 +10,12 @@ const IDLE_TIMEOUT_MS = IDLE_TIMEOUT_MINUTES * 60 * 1000;
 export default function App() {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
-  useEffect(() => { request("/auth/me/").then(setUser).catch(() => {}).finally(() => setChecking(false)); }, []);
+  useEffect(() => {
+    request("/auth/me/")
+      .then(setUser)
+      .catch(() => {})
+      .finally(() => setChecking(false));
+  }, []);
   useEffect(() => {
     const handleExpiredSession = () => setUser(null);
     window.addEventListener("auth:expired", handleExpiredSession);
@@ -40,10 +45,20 @@ export default function App() {
   }, [user]);
   if (checking) return <div className="app-loading">Caricamento...</div>;
   async function handleLogout() {
-    try { await logout(); } finally { setUser(null); }
+    try {
+      await logout();
+    } finally {
+      setUser(null);
+    }
   }
-  return <>
-    {user ? <DashboardPage user={user} onLogout={handleLogout} /> : <LoginPage onLogin={async (email, password) => setUser(await login(email, password))} />}
-    <DialogHost />
-  </>;
+  return (
+    <>
+      {user ? (
+        <DashboardPage user={user} onLogout={handleLogout} />
+      ) : (
+        <LoginPage onLogin={async (email, password) => setUser(await login(email, password))} />
+      )}
+      <DialogHost />
+    </>
+  );
 }
