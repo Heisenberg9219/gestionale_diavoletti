@@ -58,18 +58,58 @@ const notificationTarget = {
 const asList = (data) => data?.results || data || [];
 const navigationStorageKey = (user) => `diavoletti.active-page.${user?.id || user?.email || "current-user"}`;
 
+// Ogni pagina ha un proprio indirizzo: il tasto "indietro" del browser funziona,
+// la pagina si può aggiungere ai preferiti e ricaricando si resta dove si era.
+const PAGE_PATHS = {
+  Panoramica: "/panoramica",
+  "Storico vendite": "/storico-vendite",
+  "Nuova vendita": "/nuova-vendita",
+  Cassa: "/cassa",
+  Resi: "/resi",
+  Catalogo: "/catalogo",
+  Magazzino: "/magazzino",
+  Inventari: "/inventari",
+  Riordini: "/riordini",
+  Clienti: "/clienti",
+  Fedeltà: "/fedelta",
+  Buoni: "/buoni",
+  "Liste regalo": "/liste-regalo",
+  Fornitori: "/fornitori",
+  "Ordini acquisto": "/ordini-acquisto",
+  Promozioni: "/promozioni",
+  Spese: "/spese",
+  "Documenti e OCR": "/documenti",
+  Notifiche: "/notifiche",
+  Integrazioni: "/integrazioni",
+  Report: "/report",
+  "Utenti e ruoli": "/utenti",
+};
+const pageFromPath = (pathname) => {
+  const clean = pathname.replace(/\/+$/, "") || "/";
+  return Object.keys(PAGE_PATHS).find((page) => PAGE_PATHS[page] === clean) || null;
+};
+const canOpen = (page, allowedPages) =>
+  Boolean(page) && (allowedPages === null || allowedPages.includes(page));
+
+function initialPage(user, allowedPages) {
+  const fromUrl = pageFromPath(window.location.pathname);
+  return canOpen(fromUrl, allowedPages) ? fromUrl : savedActivePage(user, allowedPages);
+}
+
 function savedActivePage(user, allowedPages) {
   try {
     const saved = window.localStorage.getItem(navigationStorageKey(user));
     if (saved && (allowedPages === null || allowedPages.includes(saved))) return saved;
-  } catch { /* La navigazione resta disponibile anche senza localStorage. */ }
+  } catch {
+    /* La navigazione resta disponibile anche senza localStorage. */
+  }
   return allowedPages?.[0] || "Panoramica";
 }
 
 export default function DashboardPage({ user, onLogout }) {
   const isClerk = user?.roles?.includes("Commesso") && !user?.is_superuser;
-  const allowedPages = isClerk ? (user?.page_permissions || []) : null;
-  const [active, setActive] = useState(() => savedActivePage(user, allowedPages));
+  const allowedPages = isClerk ? user?.page_permissions || [] : null;
+  const [active, setActive] = useState(() => initialPage(user, allowedPages));
   const [mobileMenu, setMobileMenu] = useState(false);
   const [returnSale, setReturnSale] = useState(null);
   const [exchangeCredit, setExchangeCredit] = useState(null);
@@ -83,9 +123,39 @@ export default function DashboardPage({ user, onLogout }) {
     if (isClerk && !allowedPages.includes(active)) setActive(allowedPages[0] || "");
   }, [active, allowedPages, isClerk]);
 
+  // Allinea l'indirizzo alla pagina aperta (senza duplicare la cronologia
+  // quando il cambio arriva dal tasto "indietro").
   useEffect(() => {
-    try { window.localStorage.setItem(navigationStorageKey(user), active); }
-    catch { /* Il salvataggio della preferenza non deve bloccare l'applicazione. */ }
+    const path = PAGE_PATHS[active];
+    if (path && window.location.pathname !== path) {
+      const firstLoad = !pageFromPath(window.location.pathname);
+      window.history[firstLoad ? "replaceState" : "pushState"](
+        { page: active },
+        "",
+        path + window.location.search,
+      );
+    }
+    if (active) document.title = `${active} · I Diavoletti`;
+  }, [active]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const page = pageFromPath(window.location.pathname);
+      if (canOpen(page, allowedPages)) {
+        setActive(page);
+        setMobileMenu(false);
+      }
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [allowedPages]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(navigationStorageKey(user), active);
+    } catch {
+      /* Il salvataggio della preferenza non deve bloccare l'applicazione. */
+    }
   }, [active, user]);
 
   useEffect(() => {
@@ -109,26 +179,47 @@ export default function DashboardPage({ user, onLogout }) {
           request("/notifications/deliveries/"),
         ]);
         if (disposed) return;
-        const deliveryByNotification = new Map(asList(deliveries).map((delivery) => [delivery.notification, delivery]));
-        setBellItems(asList(notifications)
-          .map((notification) => ({ notification, delivery: deliveryByNotification.get(notification.id) }))
-          .filter(({ notification, delivery }) => notification.status === "ACTIVE" && delivery && !delivery.archived_at));
+        const deliveryByNotification = new Map(
+          asList(deliveries).map((delivery) => [delivery.notification, delivery]),
+        );
+        setBellItems(
+          asList(notifications)
+            .map((notification) => ({ notification, delivery: deliveryByNotification.get(notification.id) }))
+            .filter(
+              ({ notification, delivery }) =>
+                notification.status === "ACTIVE" && delivery && !delivery.archived_at,
+            ),
+        );
       } catch {
         if (!disposed) setBellItems([]);
       }
     };
     loadBellItems();
     const interval = window.setInterval(loadBellItems, 30000);
-    return () => { disposed = true; window.clearInterval(interval); };
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+    };
   }, []);
 
   const unreadBellItems = bellItems.filter(({ delivery }) => !delivery.read_at);
   const openNotification = async ({ notification, delivery }) => {
     if (!delivery.read_at) {
       try {
-        await request(`/notifications/deliveries/${delivery.id}/mark-read/`, { method: "POST", body: JSON.stringify({}) });
-        setBellItems((items) => items.map((item) => item.delivery.id === delivery.id ? { ...item, delivery: { ...item.delivery, read_at: new Date().toISOString() } } : item));
-      } catch { /* La navigazione resta disponibile anche se il segno di lettura fallisce. */ }
+        await request(`/notifications/deliveries/${delivery.id}/mark-read/`, {
+          method: "POST",
+          body: JSON.stringify({}),
+        });
+        setBellItems((items) =>
+          items.map((item) =>
+            item.delivery.id === delivery.id
+              ? { ...item, delivery: { ...item.delivery, read_at: new Date().toISOString() } }
+              : item,
+          ),
+        );
+      } catch {
+        /* La navigazione resta disponibile anche se il segno di lettura fallisce. */
+      }
     }
     setBellOpen(false);
     setActive(notificationTarget[notification.source_type] || "Notifiche");
@@ -136,8 +227,22 @@ export default function DashboardPage({ user, onLogout }) {
 
   return (
     <main className="dashboard-shell">
-      {mobileMenu && <button className="mobile-sidebar-backdrop" type="button" aria-label="Chiudi menu" onClick={() => setMobileMenu(false)} />}
-      <Sidebar active={active} onNavigate={setActive} onLogout={onLogout} mobileOpen={mobileMenu} onClose={() => setMobileMenu(false)} allowedPages={allowedPages} />
+      {mobileMenu && (
+        <button
+          className="mobile-sidebar-backdrop"
+          type="button"
+          aria-label="Chiudi menu"
+          onClick={() => setMobileMenu(false)}
+        />
+      )}
+      <Sidebar
+        active={active}
+        onNavigate={setActive}
+        onLogout={onLogout}
+        mobileOpen={mobileMenu}
+        onClose={() => setMobileMenu(false)}
+        allowedPages={allowedPages}
+      />
       <style>{`
         .mobile-menu-button, .mobile-sidebar-close, .mobile-sidebar-backdrop { display: none; }
         :where(.dashboard-main > :not(.dashboard-watermark):not(.mobile-dashboard-nav):not(style)) { position: relative; }
@@ -202,63 +307,278 @@ export default function DashboardPage({ user, onLogout }) {
         }
       `}</style>
       <section className="dashboard-main">
-        <img className="dashboard-watermark" src={logo} alt="" aria-hidden="true" style={{ position: "fixed", right: 22, bottom: 18, width: "min(250px, 22vw)", opacity: 0.11, pointerEvents: "none", zIndex: 0 }} />
+        <img
+          className="dashboard-watermark"
+          src={logo}
+          alt=""
+          aria-hidden="true"
+          style={{
+            position: "fixed",
+            right: 22,
+            bottom: 18,
+            width: "min(250px, 22vw)",
+            opacity: 0.11,
+            pointerEvents: "none",
+            zIndex: 0,
+          }}
+        />
         <header className="dashboard-header">
           <div>
-            <p>{new Intl.DateTimeFormat("it-IT", { weekday: "long", day: "numeric", month: "long" }).format(new Date())}</p>
+            <p>
+              {new Intl.DateTimeFormat("it-IT", { weekday: "long", day: "numeric", month: "long" }).format(
+                new Date(),
+              )}
+            </p>
             <h1>Buongiorno, {firstName}.</h1>
           </div>
           <div className="header-actions">
-            <button className="mobile-menu-button" type="button" aria-label="Apri menu" onClick={() => setMobileMenu(true)}><Menu size={22} /></button>
+            <button
+              className="mobile-menu-button"
+              type="button"
+              aria-label="Apri menu"
+              onClick={() => setMobileMenu(true)}
+            >
+              <Menu size={22} />
+            </button>
             <div className="notification-menu">
-              <button className={`icon-button ${unreadBellItems.length ? "has-unread" : ""}`} type="button" aria-label="Notifiche" aria-expanded={bellOpen} onClick={() => setBellOpen((open) => !open)}><Bell size={20} /><i /></button>
-              {bellOpen && <div className="header-notifications" role="dialog" aria-label="Notifiche recenti"><div className="header-notifications-head"><strong>Notifiche</strong><span>{unreadBellItems.length ? `${unreadBellItems.length} non lette` : "Tutto letto"}</span></div>{bellItems.length ? bellItems.slice(0, 5).map((item) => <button className={`header-notification-item ${item.delivery.read_at ? "" : "unread"}`} key={item.notification.id} type="button" onClick={() => openNotification(item)}><strong>{item.notification.title}</strong><span>{item.notification.message}</span></button>) : <span className="header-notifications-empty">Nessun nuovo evento.</span>}<button className="header-notifications-footer" type="button" onClick={() => { setBellOpen(false); setActive("Notifiche"); }}>Visualizza tutte</button></div>}
+              <button
+                className={`icon-button ${unreadBellItems.length ? "has-unread" : ""}`}
+                type="button"
+                aria-label="Notifiche"
+                aria-expanded={bellOpen}
+                onClick={() => setBellOpen((open) => !open)}
+              >
+                <Bell size={20} />
+                <i />
+              </button>
+              {bellOpen && (
+                <div className="header-notifications" role="dialog" aria-label="Notifiche recenti">
+                  <div className="header-notifications-head">
+                    <strong>Notifiche</strong>
+                    <span>
+                      {unreadBellItems.length ? `${unreadBellItems.length} non lette` : "Tutto letto"}
+                    </span>
+                  </div>
+                  {bellItems.length ? (
+                    bellItems.slice(0, 5).map((item) => (
+                      <button
+                        className={`header-notification-item ${item.delivery.read_at ? "" : "unread"}`}
+                        key={item.notification.id}
+                        type="button"
+                        onClick={() => openNotification(item)}
+                      >
+                        <strong>{item.notification.title}</strong>
+                        <span>{item.notification.message}</span>
+                      </button>
+                    ))
+                  ) : (
+                    <span className="header-notifications-empty">Nessun nuovo evento.</span>
+                  )}
+                  <button
+                    className="header-notifications-footer"
+                    type="button"
+                    onClick={() => {
+                      setBellOpen(false);
+                      setActive("Notifiche");
+                    }}
+                  >
+                    Visualizza tutte
+                  </button>
+                </div>
+              )}
             </div>
-            <button className="profile-button"><span>{firstName.slice(0, 1).toUpperCase()}</span><strong>{firstName}</strong></button>
+            <button className="profile-button">
+              <span>{firstName.slice(0, 1).toUpperCase()}</span>
+              <strong>{firstName}</strong>
+            </button>
           </div>
         </header>
 
-        {isClerk && !active ? <section className="empty-product-state"><Bell size={28} /><strong>Nessuna pagina abilitata</strong><span>Il titolare deve assegnarti almeno un permesso dalla pagina Utenti e ruoli.</span></section> : active === "Storico vendite" ? <SalesPage onStartReturn={(sale) => { setReturnSale(sale); setActive("Resi"); }} /> : active === "Cassa" ? <CashPage onNavigate={setActive} /> : active === "Nuova vendita" ? <NewSalePage onNavigate={setActive} exchangeCredit={exchangeCredit} onClearExchange={() => setExchangeCredit(null)} /> : active === "Resi" ? <ReturnsPage canCancelConfirmed={Boolean(user?.is_superuser || user?.roles?.includes("Titolare"))} onNavigate={setActive} onStartExchange={(credit) => { setExchangeCredit(credit); setActive("Nuova vendita"); }} initialSale={returnSale} onClearInitialSale={() => setReturnSale(null)} /> : active === "Catalogo" ? <CatalogPage canSeeCosts={Boolean(user?.is_superuser || user?.roles?.includes("Titolare"))} /> : active === "Magazzino" ? <InventoryPage /> : active === "Inventari" ? <CountsPage /> : active === "Riordini" ? <ReordersPage /> : active === "Clienti" ? <CustomersPage /> : active === "Fedeltà" ? <LoyaltyPage /> : active === "Buoni" ? <VoucherPage /> : active === "Liste regalo" ? <GiftListsPage /> : active === "Fornitori" ? <SuppliersPage /> : active === "Ordini acquisto" ? <PurchaseOrdersPage /> : active === "Promozioni" ? <PromotionsPage /> : active === "Spese" ? <ExpensesPage /> : active === "Documenti e OCR" ? <DocumentsOcrPage /> : active === "Notifiche" ? <NotificationsPage onNavigate={setActive} /> : active === "Integrazioni" ? <IntegrationsPage /> : active === "Report" ? <ReportsPage /> : active === "Utenti e ruoli" ? <UsersRolesPage currentUser={user} /> : <>
-        <section className="dashboard-overview">
-          <div className="overview-copy">
-            <p className="eyebrow">Situazione di oggi</p>
-            <h2>Tutto pronto per una buona giornata.</h2>
-            <span>{loading ? "Aggiornamento dati in corso..." : "Dati aggiornati in tempo reale dal gestionale."}</span>
-          </div>
-          <div className="quick-actions">
-            <button className="primary-action" type="button" onClick={() => setActive("Nuova vendita")}><Plus size={18} /> Nuova vendita</button>
-            <button className="secondary-action" type="button" onClick={() => setActive("Catalogo")}><ScanLine size={18} /> Cerca articolo</button>
-          </div>
-        </section>
+        {isClerk && !active ? (
+          <section className="empty-product-state">
+            <Bell size={28} />
+            <strong>Nessuna pagina abilitata</strong>
+            <span>Il titolare deve assegnarti almeno un permesso dalla pagina Utenti e ruoli.</span>
+          </section>
+        ) : active === "Storico vendite" ? (
+          <SalesPage
+            onStartReturn={(sale) => {
+              setReturnSale(sale);
+              setActive("Resi");
+            }}
+          />
+        ) : active === "Cassa" ? (
+          <CashPage onNavigate={setActive} />
+        ) : active === "Nuova vendita" ? (
+          <NewSalePage
+            onNavigate={setActive}
+            exchangeCredit={exchangeCredit}
+            onClearExchange={() => setExchangeCredit(null)}
+          />
+        ) : active === "Resi" ? (
+          <ReturnsPage
+            canCancelConfirmed={Boolean(user?.is_superuser || user?.roles?.includes("Titolare"))}
+            onNavigate={setActive}
+            onStartExchange={(credit) => {
+              setExchangeCredit(credit);
+              setActive("Nuova vendita");
+            }}
+            initialSale={returnSale}
+            onClearInitialSale={() => setReturnSale(null)}
+          />
+        ) : active === "Catalogo" ? (
+          <CatalogPage canSeeCosts={Boolean(user?.is_superuser || user?.roles?.includes("Titolare"))} />
+        ) : active === "Magazzino" ? (
+          <InventoryPage />
+        ) : active === "Inventari" ? (
+          <CountsPage />
+        ) : active === "Riordini" ? (
+          <ReordersPage />
+        ) : active === "Clienti" ? (
+          <CustomersPage />
+        ) : active === "Fedeltà" ? (
+          <LoyaltyPage />
+        ) : active === "Buoni" ? (
+          <VoucherPage />
+        ) : active === "Liste regalo" ? (
+          <GiftListsPage />
+        ) : active === "Fornitori" ? (
+          <SuppliersPage />
+        ) : active === "Ordini acquisto" ? (
+          <PurchaseOrdersPage />
+        ) : active === "Promozioni" ? (
+          <PromotionsPage />
+        ) : active === "Spese" ? (
+          <ExpensesPage />
+        ) : active === "Documenti e OCR" ? (
+          <DocumentsOcrPage />
+        ) : active === "Notifiche" ? (
+          <NotificationsPage onNavigate={setActive} />
+        ) : active === "Integrazioni" ? (
+          <IntegrationsPage />
+        ) : active === "Report" ? (
+          <ReportsPage />
+        ) : active === "Utenti e ruoli" ? (
+          <UsersRolesPage currentUser={user} />
+        ) : (
+          <>
+            <section className="dashboard-overview">
+              <div className="overview-copy">
+                <p className="eyebrow">Situazione di oggi</p>
+                <h2>Tutto pronto per una buona giornata.</h2>
+                <span>
+                  {loading
+                    ? "Aggiornamento dati in corso..."
+                    : "Dati aggiornati in tempo reale dal gestionale."}
+                </span>
+              </div>
+              <div className="quick-actions">
+                <button className="primary-action" type="button" onClick={() => setActive("Nuova vendita")}>
+                  <Plus size={18} /> Nuova vendita
+                </button>
+                <button className="secondary-action" type="button" onClick={() => setActive("Catalogo")}>
+                  <ScanLine size={18} /> Cerca articolo
+                </button>
+              </div>
+            </section>
 
-        <section className="metrics-grid" aria-label="Riepilogo giornata">
-          <MetricCard label="Incasso di oggi" value={euro.format(Number(overview.metrics.revenue))} change="Vendite confermate oggi" tone="red" icon={CircleDollarSign} />
-          <MetricCard label="Vendite concluse" value={overview.metrics.sales_count} change="Scontrini confermati oggi" icon={ShoppingBag} />
-          <MetricCard label="Pezzi venduti" value={overview.metrics.units_sold} change="Articoli venduti oggi" icon={PackageCheck} />
-          <MetricCard label="Nuovi clienti" value={overview.metrics.new_customers} change="Anagrafiche create oggi" icon={UsersRound} />
-        </section>
+            <section className="metrics-grid" aria-label="Riepilogo giornata">
+              <MetricCard
+                label="Incasso di oggi"
+                value={euro.format(Number(overview.metrics.revenue))}
+                change="Vendite confermate oggi"
+                tone="red"
+                icon={CircleDollarSign}
+              />
+              <MetricCard
+                label="Vendite concluse"
+                value={overview.metrics.sales_count}
+                change="Scontrini confermati oggi"
+                icon={ShoppingBag}
+              />
+              <MetricCard
+                label="Pezzi venduti"
+                value={overview.metrics.units_sold}
+                change="Articoli venduti oggi"
+                icon={PackageCheck}
+              />
+              <MetricCard
+                label="Nuovi clienti"
+                value={overview.metrics.new_customers}
+                change="Anagrafiche create oggi"
+                icon={UsersRound}
+              />
+            </section>
 
-        <section className="dashboard-grid">
-          <article className="dashboard-panel recent-sales">
-            <div className="panel-heading"><div><p>In tempo reale</p><h2>Ultime vendite</h2></div><button type="button" onClick={() => setActive("Storico vendite")}>Vedi tutte <ChevronRight size={17} /></button></div>
-            <div className="sales-table">
-              {overview.recent_sales.length ? overview.recent_sales.map((sale) => <div className="sale-row" key={sale.id}><div><strong>{sale.customer_name}</strong><span>{sale.number} · {new Intl.DateTimeFormat("it-IT", { hour: "2-digit", minute: "2-digit" }).format(new Date(sale.confirmed_at))}</span></div><span className="sale-status">Completata</span><strong>{euro.format(Number(sale.total_amount))}</strong></div>) : <p className="empty-sales">Nessuna vendita confermata oggi.</p>}
-            </div>
-          </article>
-          <article className="dashboard-panel stock-panel">
-            <div className="panel-heading"><div><p>Attenzione</p><h2>Scorte esaurite</h2></div><button type="button" aria-label="Apri magazzino" onClick={() => setActive("Magazzino")}><ArrowUpRight size={18} /></button></div>
-            <div className="stock-number">{overview.stock.out_of_stock_balances} <span>giacenze</span></div>
-            <p>sono attualmente a zero nelle sedi di magazzino.</p>
-            <button className="stock-action" type="button" onClick={() => setActive("Riordini")}><ClipboardList size={17} /> Apri lista riordino</button>
-          </article>
-        </section>
+            <section className="dashboard-grid">
+              <article className="dashboard-panel recent-sales">
+                <div className="panel-heading">
+                  <div>
+                    <p>In tempo reale</p>
+                    <h2>Ultime vendite</h2>
+                  </div>
+                  <button type="button" onClick={() => setActive("Storico vendite")}>
+                    Vedi tutte <ChevronRight size={17} />
+                  </button>
+                </div>
+                <div className="sales-table">
+                  {overview.recent_sales.length ? (
+                    overview.recent_sales.map((sale) => (
+                      <div className="sale-row" key={sale.id}>
+                        <div>
+                          <strong>{sale.customer_name}</strong>
+                          <span>
+                            {sale.number} ·{" "}
+                            {new Intl.DateTimeFormat("it-IT", { hour: "2-digit", minute: "2-digit" }).format(
+                              new Date(sale.confirmed_at),
+                            )}
+                          </span>
+                        </div>
+                        <span className="sale-status">Completata</span>
+                        <strong>{euro.format(Number(sale.total_amount))}</strong>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="empty-sales">Nessuna vendita confermata oggi.</p>
+                  )}
+                </div>
+              </article>
+              <article className="dashboard-panel stock-panel">
+                <div className="panel-heading">
+                  <div>
+                    <p>Attenzione</p>
+                    <h2>Scorte esaurite</h2>
+                  </div>
+                  <button type="button" aria-label="Apri magazzino" onClick={() => setActive("Magazzino")}>
+                    <ArrowUpRight size={18} />
+                  </button>
+                </div>
+                <div className="stock-number">
+                  {overview.stock.out_of_stock_balances} <span>giacenze</span>
+                </div>
+                <p>sono attualmente a zero nelle sedi di magazzino.</p>
+                <button className="stock-action" type="button" onClick={() => setActive("Riordini")}>
+                  <ClipboardList size={17} /> Apri lista riordino
+                </button>
+              </article>
+            </section>
 
-        <section className="mobile-dashboard-nav" aria-label="Azioni rapide">
-          <button className="active" type="button" onClick={() => setActive("Nuova vendita")}><ShoppingBag size={20} />Vendite</button>
-          <button type="button" onClick={() => setActive("Catalogo")}><ScanLine size={20} />Cerca</button>
-          <button type="button" onClick={() => setActive("Cassa")}><CreditCard size={20} />Cassa</button>
-        </section>
-        </>}
+            <section className="mobile-dashboard-nav" aria-label="Azioni rapide">
+              <button className="active" type="button" onClick={() => setActive("Nuova vendita")}>
+                <ShoppingBag size={20} />
+                Vendite
+              </button>
+              <button type="button" onClick={() => setActive("Catalogo")}>
+                <ScanLine size={20} />
+                Cerca
+              </button>
+              <button type="button" onClick={() => setActive("Cassa")}>
+                <CreditCard size={20} />
+                Cassa
+              </button>
+            </section>
+          </>
+        )}
       </section>
     </main>
   );
