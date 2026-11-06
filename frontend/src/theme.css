@@ -926,14 +926,12 @@ kbd,
 
 /* ---------- Resi: elenco e dettaglio affiancati ---------- */
 .returns-split {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(440px, 5fr) minmax(0, 7fr);
   gap: 20px;
-  align-items: flex-start;
+  align-items: start;
 }
 .returns-split > .returns-list-panel {
-  flex: 1 1 360px;
-  max-width: 460px;
   min-width: 0;
   background: var(--surface);
   border: 1px solid var(--line);
@@ -941,8 +939,9 @@ kbd,
   overflow: hidden;
 }
 .returns-split > .returns-detail-panel {
-  flex: 999 1 520px;
   min-width: 0;
+  position: sticky;
+  top: 86px;
 }
 .returns-list-tools {
   padding: 14px;
@@ -1063,13 +1062,48 @@ kbd,
   margin: 4px 0 2px;
 }
 
-/* Resi: filtri e paginazione dentro il pannello stretto */
-.returns-list-tools .seg {
-  flex-wrap: wrap;
+/* Resi: filtri e paginazione dentro il pannello */
+.returns-filter {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  width: 100%;
 }
-.returns-list-tools .seg button {
+.returns-filter button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   white-space: nowrap;
-  padding: 0 10px;
+  padding: 0 8px;
+}
+.returns-filter button small {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--line);
+  color: var(--muted);
+  font: 600 11px/1.5 var(--mono);
+}
+.returns-filter button[aria-pressed="true"] small {
+  background: rgba(255, 255, 255, 0.18);
+  color: inherit;
+}
+.returns-list-panel .empty-note {
+  padding: 48px 28px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.returns-detail-empty {
+  min-height: 320px;
+  align-content: center;
+}
+@media (max-width: 1000px) {
+  .returns-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .returns-split > .returns-detail-panel {
+    position: static;
+  }
 }
 .returns-list-panel .table-pagination {
   flex-wrap: wrap;
@@ -1084,4 +1118,51 @@ kbd,
 .return-detail-heading {
   margin: 4px 0;
   font-size: 22px;
+}
+
+/* Resi: righe su una sola linea e pannello che non deborda */
+.returns-list-panel .returns-search {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+}
+.returns-list-panel .returns-search input {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.returns-filter button {
+  min-width: 0;
+  padding: 0 4px;
+}
+.returns-list-panel .return-row {
+  grid-template-columns: minmax(0, 1fr) auto 84px;
+  align-items: center;
+  gap: 12px;
+}
+.returns-list-panel .return-row .return-status {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+.returns-list-panel .return-row > strong {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+}
+
+.returns-filter {
+  gap: 2px;
+}
+.returns-filter button {
+  gap: 5px;
+  font-size: 13px;
+}
+.returns-filter button small {
+  min-width: 16px;
+  padding: 0 5px;
+}
+
+.returns-detail-panel .return-back {
+  white-space: nowrap;
+  flex-shrink: 0;
 }

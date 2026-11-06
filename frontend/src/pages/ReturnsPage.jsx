@@ -689,7 +689,7 @@ export default function ReturnsPage({
               />
               <button>Ricerca</button>
             </form>
-            <div className="seg" role="group" aria-label="Filtra per stato">
+            <div className="seg returns-filter" role="group" aria-label="Filtra per stato">
               {[
                 ["ALL", "Tutti"],
                 ["DRAFT", "Bozze"],
@@ -703,7 +703,11 @@ export default function ReturnsPage({
                   onClick={() => setStatusFilter(value)}
                 >
                   {label}
-                  {value !== "ALL" && ` · ${returns.filter((item) => item.status === value).length}`}
+                  <small>
+                    {value === "ALL"
+                      ? returns.length
+                      : returns.filter((item) => item.status === value).length}
+                  </small>
                 </button>
               ))}
             </div>
@@ -720,7 +724,7 @@ export default function ReturnsPage({
                     : "Ancora nessun reso. Per farne uno, apri lo Storico vendite e scegli lo scontrino."}
               </p>
             )}
-            {!loading && !error && (
+            {!loading && !error && shownReturns.length > 0 && (
               <PaginatedRows items={shownReturns} resetKey={`${search}-${statusFilter}`}>
                 {(rows) =>
                   rows.map((item) => (
