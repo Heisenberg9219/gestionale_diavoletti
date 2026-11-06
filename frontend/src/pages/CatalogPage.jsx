@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { downloadFile, request } from "../api";
 import { askConfirm, askText } from "../components/Dialogs";
+import { notify } from "../components/Toasts";
 import PaginationControls from "../components/PaginationControls";
 import "../products.css";
 
@@ -40,7 +41,16 @@ const blank = {
   current_sale_price: "",
   quantity: "",
   location: "",
+  productId: "",
+  rows: [],
 };
+let rowKey = 0;
+const newRow = (sku = "", size = "") => ({ key: ++rowKey, size, sku, barcode: "", quantity: "", saved: "" });
+function stockBadge(quantity) {
+  if (quantity == null) return <span className="stock-chip">—</span>;
+  const tone = quantity <= 0 ? "zero" : quantity <= 2 ? "low" : "ok";
+  return <span className={`stock-chip ${tone}`}>{quantity <= 0 ? "esaurito" : quantity}</span>;
+}
 const blankBulk = {
   brand: "",
   category: "",
@@ -89,6 +99,8 @@ export default function CatalogPage({ canSeeCosts = false }) {
   const [bulk, setBulk] = useState(blankBulk);
   const [bulkSaving, setBulkSaving] = useState(false);
   const [bulkNotice, setBulkNotice] = useState("");
+  const scanOpen = useRef(false);
+  const searchRef = useRef(null);
 
   const load = (requestedPage = page, requestedPageSize = pageSize, requestedSort = sort) => {
     setLoading(true);
@@ -96,10 +108,21 @@ export default function CatalogPage({ canSeeCosts = false }) {
       ? `&sort=${requestedSort.field}&sort_direction=${requestedSort.direction}`
       : "";
     request(
-      `/catalog/variants/?active=true&search=${encodeURIComponent(query)}&page=${requestedPage}&page_size=${requestedPageSize}${sortParams}`,
+      `/catalog/variants/?active=true&stock_scope=all&search=${encodeURIComponent(query)}&page=${requestedPage}&page_size=${requestedPageSize}${sortParams}`,
     )
       .then((data) => {
         const rows = list(data);
+        // Codice sparato col lettore: se corrisponde esattamente a un solo articolo lo apre subito.
+        const code = query.trim().toLowerCase();
+        if (code && rows.length === 1 && scanOpen.current) {
+          const only = rows[0];
+          if (
+            only.sku.toLowerCase() === code ||
+            (only.barcodes || []).some((item) => item.toLowerCase() === code)
+          )
+            openEdit(only);
+        }
+        scanOpen.current = false;
         setItems(rows);
         setTotal(data.count ?? rows.length);
         setPage(requestedPage);
@@ -268,7 +291,7 @@ export default function CatalogPage({ canSeeCosts = false }) {
   async function openNew() {
     setEditing(null);
     setError("");
-    setForm({ ...blank });
+    setForm({ ...blank, rows: [newRow()] });
     setOpen(true);
     setSkuLoading(true);
     try {
@@ -277,7 +300,13 @@ export default function CatalogPage({ canSeeCosts = false }) {
         body: JSON.stringify({ count: 1 }),
       });
       if (!result.skus?.[0]) throw new Error("Non è stato possibile generare il prossimo SKU.");
-      setForm((current) => ({ ...current, sku: result.skus[0] }));
+      setForm((current) => ({
+        ...current,
+        sku: result.skus[0],
+        rows: current.rows.map((row, index) =>
+          index === 0 && !row.sku ? { ...row, sku: result.skus[0] } : row,
+        ),
+      }));
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -285,10 +314,170 @@ export default function CatalogPage({ canSeeCosts = false }) {
     }
   }
 
+  // ---------- Griglia taglie × quantità (solo nuovo articolo) ----------
+  const updateRow = (key, field, value) =>
+    setForm((current) => ({
+      ...current,
+      rows: current.rows.map((row) => (row.key === key ? { ...row, [field]: value } : row)),
+    }));
+  const removeRow = (key) =>
+    setForm((current) =>
+      current.rows.length > 1 ? { ...current, rows: current.rows.filter((row) => row.key !== key) } : current,
+    );
+
+  async function addRow(size = "") {
+    const empty = size && form.rows.find((item) => !item.size && !item.saved);
+    if (empty) {
+      updateRow(empty.key, "size", size);
+      return;
+    }
+    const row = newRow("", size);
+    setForm((current) => ({ ...current, rows: [...current.rows, row] }));
+    setSkuLoading(true);
+    try {
+      const result = await request("/catalog/variants/reserve-skus/", {
+        method: "POST",
+        body: JSON.stringify({ count: 1 }),
+      });
+      setForm((current) => ({
+        ...current,
+        rows: current.rows.map((item) =>
+          item.key === row.key && !item.sku ? { ...item, sku: result.skus?.[0] || "" } : item,
+        ),
+      }));
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSkuLoading(false);
+    }
+  }
+
+  function toggleSize(sizeId) {
+    const existing = form.rows.find((row) => row.size === sizeId);
+    if (existing) {
+      if (existing.saved) return;
+      if (form.rows.length > 1) removeRow(existing.key);
+      else updateRow(existing.key, "size", "");
+      return;
+    }
+    addRow(sizeId);
+  }
+
+  async function saveNew() {
+    const rows = form.rows.filter((row) => !row.saved);
+    const sizes = form.rows.map((row) => row.size);
+    if (rows.some((row) => !row.size)) throw new Error("Scegli la taglia in ogni riga della griglia.");
+    if (rows.some((row) => !row.sku.trim())) throw new Error("Ogni riga deve avere uno SKU.");
+    if (new Set(sizes).size !== sizes.length) throw new Error("La stessa taglia compare in due righe.");
+    const season = await ensureSeason(form.season_type, form.season_year);
+    let productId = form.productId;
+    if (!productId) {
+      const product = await request("/catalog/products/", {
+        method: "POST",
+        body: JSON.stringify({
+          code: form.code,
+          name: form.name,
+          description: form.description,
+          brand: form.brand || null,
+          category: form.category,
+          season,
+          tax_rate: form.tax_rate,
+        }),
+      });
+      productId = product.id;
+      setForm((current) => ({ ...current, productId }));
+    }
+    const location = form.location || options.locations?.[0]?.id || null;
+    const warnings = [];
+    let created = 0;
+    let pieces = 0;
+    for (const row of rows) {
+      const sizeLabel = options.sizes.find((item) => item.id === row.size)?.label || "";
+      let variant;
+      try {
+        variant = await request("/catalog/variants/", {
+          method: "POST",
+          body: JSON.stringify({
+            product: productId,
+            sku: row.sku.trim(),
+            size: row.size,
+            color: form.color || null,
+            purchase_price: form.purchase_price || null,
+          }),
+        });
+      } catch (requestError) {
+        throw new Error(
+          `Taglia ${sizeLabel}: ${requestError.message}${created ? ` (le altre ${created} taglie sono già salvate)` : ""}`,
+        );
+      }
+      created += 1;
+      setForm((current) => ({
+        ...current,
+        rows: current.rows.map((item) => (item.key === row.key ? { ...item, saved: variant.id } : item)),
+      }));
+      try {
+        if (row.barcode.trim())
+          await request("/catalog/barcodes/", {
+            method: "POST",
+            body: JSON.stringify({
+              variant: variant.id,
+              code: row.barcode.trim(),
+              barcode_type: "OTHER",
+              source: "INTERNAL",
+              is_primary: true,
+              is_active: true,
+            }),
+          });
+        if (form.sale_price)
+          await request("/pricing/sale-prices/", {
+            method: "POST",
+            body: JSON.stringify({ variant: variant.id, amount: form.sale_price, source: "MANUAL" }),
+          });
+      } catch (requestError) {
+        warnings.push(`taglia ${sizeLabel}: ${requestError.message}`);
+      }
+      const quantity = Number(row.quantity);
+      if (quantity > 0) {
+        try {
+          await request(`/catalog/variants/${variant.id}/initial-stock/`, {
+            method: "POST",
+            body: JSON.stringify({ quantity, location }),
+          });
+          pieces += quantity;
+        } catch (requestError) {
+          warnings.push(`taglia ${sizeLabel}, quantità non caricata: ${requestError.message}`);
+        }
+      }
+    }
+    return { created: form.rows.length, pieces, warnings };
+  }
+
   async function save(event) {
     event.preventDefault();
     setSaving(true);
     setError("");
+    if (!editing) {
+      try {
+        const result = await saveNew();
+        setOpen(false);
+        setForm(blank);
+        load();
+        notify(
+          `${form.name}: ${result.created} ${result.created === 1 ? "taglia creata" : "taglie create"}${
+            result.pieces ? `, ${result.pieces} pezzi caricati` : ""
+          }.`,
+        );
+        if (result.warnings.length)
+          setError(
+            `Articolo creato, ma alcune operazioni non sono riuscite: ${result.warnings.join("; ")}. Puoi completarle dal Magazzino o modificando l'articolo.`,
+          );
+      } catch (requestError) {
+        setError(requestError.message);
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
     try {
       const season = await ensureSeason(form.season_type, form.season_year);
       const productData = {
@@ -355,24 +544,11 @@ export default function CatalogPage({ canSeeCosts = false }) {
           body: JSON.stringify({ variant: variantId, amount: form.sale_price, source: "MANUAL" }),
         });
       }
-      // Nuovo articolo con quantità: carico iniziale, così è subito vendibile.
-      let stockError = "";
-      const quantity = Number(form.quantity);
-      if (!editing && quantity > 0) {
-        try {
-          await request(`/catalog/variants/${variantId}/initial-stock/`, {
-            method: "POST",
-            body: JSON.stringify({ quantity, location: form.location || options.locations?.[0]?.id || null }),
-          });
-        } catch (requestError) {
-          stockError = `Articolo creato, ma la quantità non è stata caricata: ${requestError.message} Puoi caricarla dal Magazzino.`;
-        }
-      }
       setOpen(false);
       setEditing(null);
       setForm(blank);
       load();
-      if (stockError) setError(stockError);
+      notify("Articolo aggiornato.");
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -461,11 +637,14 @@ export default function CatalogPage({ canSeeCosts = false }) {
         className="products-search"
         onSubmit={(event) => {
           event.preventDefault();
+          scanOpen.current = true;
           load(1);
         }}
       >
         <Search size={18} />
         <input
+          ref={searchRef}
+          autoFocus
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Cerca nome, SKU, barcode o codice prodotto"
@@ -618,6 +797,7 @@ export default function CatalogPage({ canSeeCosts = false }) {
           </span>
           <span>Variante</span>
           <span>Barcode</span>
+          <span className="num">Giacenza</span>
         </div>
         {loading ? (
           <p>Caricamento catalogo...</p>
@@ -645,8 +825,30 @@ export default function CatalogPage({ canSeeCosts = false }) {
               <b>{item.sku}</b>
               <span>{[item.color_name, item.size_label].filter(Boolean).join(" · ") || "—"}</span>
               <span>{item.barcodes?.join(", ") || "—"}</span>
+              <span className="num">{stockBadge(item.stock_quantity)}</span>
             </div>
           ))
+        )}
+        {!loading && !items.length && (
+          <div className="empty-note catalog-empty">
+            {query ? (
+              <>
+                Nessun articolo trovato per “{query}”. Controlla lo SKU o il barcode, oppure{" "}
+                <button type="button" className="link-button" onClick={openNew}>
+                  crea un nuovo articolo
+                </button>
+                .
+              </>
+            ) : (
+              <>
+                Il catalogo è vuoto.{" "}
+                <button type="button" className="link-button" onClick={openNew}>
+                  Crea il primo articolo
+                </button>{" "}
+                con le sue taglie e le quantità.
+              </>
+            )}
+          </div>
         )}
       </article>
       {!loading && (
@@ -743,25 +945,33 @@ export default function CatalogPage({ canSeeCosts = false }) {
                   ))}
                 </select>
               </Field>
-              <Field label="SKU">
-                <input
-                  required
-                  disabled={!editing && skuLoading}
-                  value={form.sku}
-                  placeholder={skuLoading ? "Generazione SKU..." : "SKU progressivo"}
-                  onChange={(event) => update("sku", event.target.value)}
-                />
-              </Field>
-              <Field label="Taglia">
-                <select required value={form.size} onChange={(event) => update("size", event.target.value)}>
-                  <option value="">Seleziona</option>
-                  {options.sizes.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+              {editing && (
+                <>
+                  <Field label="SKU">
+                    <input
+                      required
+                      disabled={!editing && skuLoading}
+                      value={form.sku}
+                      placeholder={skuLoading ? "Generazione SKU..." : "SKU progressivo"}
+                      onChange={(event) => update("sku", event.target.value)}
+                    />
+                  </Field>
+                  <Field label="Taglia">
+                    <select
+                      required
+                      value={form.size}
+                      onChange={(event) => update("size", event.target.value)}
+                    >
+                      <option value="">Seleziona</option>
+                      {options.sizes.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </>
+              )}
               <Field label="Colore">
                 <span className="select-with-add">
                   <select value={form.color} onChange={(event) => update("color", event.target.value)}>
@@ -815,24 +1025,9 @@ export default function CatalogPage({ canSeeCosts = false }) {
                   </small>
                 )}
               </Field>
-              <Field label="Barcode">
-                <input value={form.barcode} onChange={(event) => update("barcode", event.target.value)} />
-              </Field>
-              {!editing && (
-                <Field label="Quantità da caricare">
-                  <input
-                    type="number"
-                    min="0"
-                    max="9999"
-                    step="1"
-                    inputMode="numeric"
-                    value={form.quantity}
-                    onChange={(event) => update("quantity", event.target.value)}
-                    placeholder="0"
-                  />
-                  <small className="catalog-markup">
-                    <span>I pezzi vengono caricati in magazzino e l'articolo è subito vendibile.</span>
-                  </small>
+              {editing && (
+                <Field label="Barcode">
+                  <input value={form.barcode} onChange={(event) => update("barcode", event.target.value)} />
                 </Field>
               )}
               {!editing && (options.locations || []).length > 1 && (
@@ -850,6 +1045,128 @@ export default function CatalogPage({ canSeeCosts = false }) {
                 </Field>
               )}
             </div>
+            {!editing && (
+              <section className="size-grid" aria-label="Taglie e quantità">
+                <div className="size-grid-head">
+                  <div>
+                    <h4>Taglie e quantità</h4>
+                    <span>
+                      Clicca le taglie da creare e scrivi quanti pezzi carichi: ogni taglia diventa una
+                      variante con il suo SKU, subito vendibile.
+                    </span>
+                  </div>
+                  <b>
+                    {form.rows.filter((row) => row.size).length} taglie ·{" "}
+                    {form.rows.reduce((sum, row) => sum + (Number(row.quantity) || 0), 0)} pezzi
+                  </b>
+                </div>
+                <div className="size-chips" role="group" aria-label="Taglie disponibili">
+                  {options.sizes.map((size) => {
+                    const active = form.rows.some((row) => row.size === size.id);
+                    return (
+                      <button
+                        key={size.id}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => toggleSize(size.id)}
+                      >
+                        {size.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <table className="data-table size-grid-table">
+                  <thead>
+                    <tr>
+                      <th>Taglia</th>
+                      <th>SKU</th>
+                      <th>Barcode</th>
+                      <th className="num">Quantità da caricare</th>
+                      <th aria-label="Rimuovi" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {form.rows.map((row) => (
+                      <tr key={row.key} className={row.saved ? "saved" : ""}>
+                        <td>
+                          <select
+                            aria-label="Taglia"
+                            required
+                            disabled={Boolean(row.saved)}
+                            value={row.size}
+                            onChange={(event) => updateRow(row.key, "size", event.target.value)}
+                          >
+                            <option value="">Seleziona</option>
+                            {options.sizes.map((item) => (
+                              <option
+                                key={item.id}
+                                value={item.id}
+                                disabled={
+                                  item.id !== row.size && form.rows.some((other) => other.size === item.id)
+                                }
+                              >
+                                {item.label}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td>
+                          <input
+                            aria-label="SKU"
+                            required
+                            disabled={Boolean(row.saved)}
+                            value={row.sku}
+                            placeholder={skuLoading && !row.sku ? "Generazione SKU..." : "SKU progressivo"}
+                            onChange={(event) => updateRow(row.key, "sku", event.target.value)}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            aria-label="Barcode"
+                            disabled={Boolean(row.saved)}
+                            value={row.barcode}
+                            placeholder="Spara o scrivi"
+                            onChange={(event) => updateRow(row.key, "barcode", event.target.value)}
+                          />
+                        </td>
+                        <td className="num">
+                          <input
+                            aria-label="Quantità da caricare"
+                            type="number"
+                            min="0"
+                            max="9999"
+                            step="1"
+                            inputMode="numeric"
+                            disabled={Boolean(row.saved)}
+                            value={row.quantity}
+                            placeholder="0"
+                            onChange={(event) => updateRow(row.key, "quantity", event.target.value)}
+                          />
+                        </td>
+                        <td>
+                          {row.saved ? (
+                            <span className="stock-chip ok">salvata</span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="size-grid-remove"
+                              aria-label="Rimuovi riga"
+                              disabled={form.rows.length === 1}
+                              onClick={() => removeRow(row.key)}
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <button type="button" className="secondary-action size-grid-add" onClick={() => addRow()}>
+                  <Plus size={16} /> Aggiungi riga
+                </button>
+              </section>
+            )}
             <footer>
               <button type="button" className="secondary-action" onClick={close}>
                 Annulla
