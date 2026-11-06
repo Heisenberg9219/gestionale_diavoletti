@@ -293,7 +293,14 @@ export default function InventoryPage() {
                 {open === "adjust" && (
                   <form className="inventory-panel" onSubmit={(event) => adjust(event, item)}>
                     <label>
-                      Nuova quantità fisica:
+                      <span className="panel-label">
+                        Nuova quantità fisica:
+                        <small className={delta > 0 ? "plus" : delta < 0 ? "minus" : ""}>
+                          {delta === 0
+                            ? `Ora: ${item.quantity_on_hand}`
+                            : `${delta > 0 ? "+" : ""}${delta} rispetto a ${item.quantity_on_hand}`}
+                        </small>
+                      </span>
                       <span className="stepper">
                         <button
                           type="button"
@@ -320,11 +327,6 @@ export default function InventoryPage() {
                           <Plus size={15} />
                         </button>
                       </span>
-                      <small className={delta > 0 ? "plus" : delta < 0 ? "minus" : ""}>
-                        {delta === 0
-                          ? `Ora: ${item.quantity_on_hand}`
-                          : `${delta > 0 ? "+" : ""}${delta} rispetto a ${item.quantity_on_hand}`}
-                      </small>
                     </label>
                     <label>
                       Motivo della rettifica:
@@ -358,7 +360,9 @@ export default function InventoryPage() {
                 {open === "move" && (
                   <form className="inventory-panel" onSubmit={(event) => move(event, item)}>
                     <label>
-                      Pezzi da spostare
+                      <span className="panel-label">
+                        Pezzi da spostare <small>disponibili: {item.quantity_on_hand}</small>
+                      </span>
                       <input
                         autoFocus
                         inputMode="numeric"
@@ -367,7 +371,6 @@ export default function InventoryPage() {
                           updatePanel("quantity", event.target.value.replace(/[^0-9]/g, ""))
                         }
                       />
-                      <small>Disponibili: {item.quantity_on_hand}</small>
                     </label>
                     <label>
                       Da {item.location_name} a

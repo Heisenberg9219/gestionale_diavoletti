@@ -1531,3 +1531,44 @@ kbd,
     display: none;
   }
 }
+
+/* Magazzino: etichette su una riga, così campi e pulsanti stanno alla stessa altezza */
+.inventory-panel {
+  align-items: flex-end;
+}
+.inventory-panel .panel-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: nowrap;
+}
+.inventory-panel .panel-label small {
+  font-weight: 600;
+}
+.inventory-panel-actions button {
+  height: 40px;
+}
+.stepper {
+  height: 40px;
+}
+.stepper button {
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+.stockrow-actions button {
+  justify-content: center;
+}
+.stockrow-actions button:not([aria-label]) {
+  min-width: 96px;
+}
+.stockrow-actions button[aria-label] {
+  width: 34px;
+  padding: 0;
+}
+
+.inventory-panel label > input[inputmode="numeric"] {
+  width: 110px;
+  font-family: var(--mono);
+  text-align: center;
+}
