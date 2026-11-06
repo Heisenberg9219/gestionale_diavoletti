@@ -25,9 +25,9 @@ import {
   WalletCards,
   X,
 } from "lucide-react";
-import logo from "../assets/diavoletti-logo-transparent.png";
+import fullLogo from "../assets/diavoletti-logo-transparent.png";
 
-const navigationGroups = [
+export const navigationGroups = [
   {
     label: "Operatività",
     icon: LayoutDashboard,
@@ -107,24 +107,7 @@ export default function Sidebar({
   return (
     <aside className={`dashboard-sidebar${mobileOpen ? " mobile-open" : ""}`}>
       <div className="sidebar-brand">
-        <span
-          className="sidebar-face"
-          style={{
-            width: 32,
-            height: 42,
-            display: "block",
-            flex: "0 0 auto",
-            borderRadius: 0,
-            backgroundColor: "transparent",
-            backgroundImage: `url(${logo})`,
-            backgroundRepeat: "no-repeat",
-            backgroundSize: "102px auto",
-            backgroundPosition: "right top",
-            filter: "drop-shadow(0 2px 3px #0008)",
-          }}
-          aria-label="I Diavoletti"
-        />
-        <strong>I Diavoletti</strong>
+        <img className="sidebar-logo" src={fullLogo} alt="I Diavoletti" width="150" height="62" />
         <button className="mobile-sidebar-close" type="button" aria-label="Chiudi menu" onClick={onClose}>
           <X size={19} />
         </button>
@@ -162,6 +145,7 @@ export default function Sidebar({
                     >
                       <Icon size={17} />
                       <span>{itemLabel}</span>
+                      {itemLabel === "Nuova vendita" && <kbd>F2</kbd>}
                     </button>
                   ))}
                 </div>

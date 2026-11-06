@@ -3,6 +3,7 @@ import { Eye, FileText, FileUp, LoaderCircle, Plus, ScanText, Search, Trash2, X 
 import { openProtectedFile, request } from "../api";
 import { askConfirm, askText } from "../components/Dialogs";
 import PaginatedRows from "../components/PaginatedRows";
+import { notify } from "../components/Toasts";
 import "../products.css";
 import "./DocumentsOcrPage.css";
 
@@ -41,6 +42,181 @@ const normalizeInvoiceValue = (value) =>
     .trim()
     .toLocaleUpperCase("it-IT");
 const isSavedDraft = (status) => ["DRAFT", "SAVED"].includes(status);
+
+// ---------- Abbinamento automatico delle righe OCR al catalogo ----------
+const plain = (value) =>
+  String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("it-IT");
+const STOP_WORDS = new Set([
+  "tg",
+  "tgl",
+  "taglia",
+  "taglie",
+  "size",
+  "mis",
+  "art",
+  "cod",
+  "col",
+  "pz",
+  "per",
+  "con",
+  "del",
+  "della",
+]);
+const words = (value) =>
+  new Set(
+    plain(value)
+      .split(/[^a-z0-9]+/)
+      .filter((word) => word.length >= 3 && !STOP_WORDS.has(word) && !/^\d+$/.test(word)),
+  );
+const variantLabel = (variant) =>
+  [variant.product_name || "Articolo", variant.sku, variant.size_label && `tg ${variant.size_label}`]
+    .filter(Boolean)
+    .join(" · ");
+
+// Taglie scritte nella descrizione, es. "FELPA TG 4-6-8" o "taglie 104/110/116".
+function sizesInDescription(description, sizes) {
+  const match = plain(description).match(/(?:\btg|\btgl|\btaglie?|\bsize|\bmis)\.?\s*:?\s*([a-z0-9/,;\s-]+)/);
+  if (!match) return [];
+  const byLabel = new Map();
+  sizes.forEach((size) => {
+    const key = plain(size.label).trim();
+    if (key && !byLabel.has(key)) byLabel.set(key, size);
+  });
+  const found = [];
+  match[1]
+    .split(/[\s/,;]+/)
+    .filter(Boolean)
+    .forEach((piece) => {
+      const parts = byLabel.has(piece) ? [piece] : piece.split("-");
+      parts.forEach((part) => {
+        const size = byLabel.get(part);
+        if (size && !found.includes(size)) found.push(size);
+      });
+    });
+  return found;
+}
+
+// Suggerimento per una riga: stesso codice (SKU o barcode) oppure stesso nome prodotto.
+function suggestionFor(item, variants, sizes) {
+  const text = String(item.description || "");
+  if (!text.trim()) return null;
+  const codes = new Set(
+    text
+      .toLocaleUpperCase("it-IT")
+      .split(/[^A-Z0-9-]+/)
+      .filter((code) => code.length >= 4),
+  );
+  const byCode = variants.find(
+    (variant) =>
+      codes.has(String(variant.sku || "").toLocaleUpperCase("it-IT")) ||
+      (variant.barcodes || []).some((barcode) => codes.has(String(barcode).toLocaleUpperCase("it-IT"))),
+  );
+  if (byCode) return { kind: "variant", variant: byCode, reason: "stesso codice", sure: true };
+  const lineWords = words(text);
+  if (!lineWords.size) return null;
+  let best = null;
+  const seen = new Map();
+  variants.forEach((variant) => {
+    if (!variant.product_name || seen.has(variant.product)) return;
+    const productWords = words(variant.product_name);
+    const common = [...productWords].filter((word) => lineWords.has(word)).length;
+    const score = productWords.size ? common / productWords.size : 0;
+    seen.set(variant.product, score);
+    if (score >= 0.6 && common >= 1 && (!best || score > best.score)) best = { score, variant };
+  });
+  if (!best) return null;
+  const productVariants = variants.filter((variant) => variant.product === best.variant.product);
+  const wanted = sizesInDescription(text, sizes).map((size) => plain(size.label));
+  const sameSize = productVariants.find((variant) => wanted.includes(plain(variant.size_label)));
+  if (sameSize && wanted.length === 1)
+    return { kind: "variant", variant: sameSize, reason: "stesso nome e taglia", sure: false };
+  return {
+    kind: "product",
+    productId: best.variant.product,
+    productName: best.variant.product_name,
+    sizes: productVariants.map((variant) => variant.size_label).filter(Boolean),
+  };
+}
+
+// Scelta dell'articolo con ricerca: si scrive nome, SKU, taglia o barcode.
+function VariantPicker({ value, variants, onChange }) {
+  const [text, setText] = useState("");
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const selected = variants.find((variant) => variant.id === value);
+  const shown = value === "__new__" ? "Crea articolo e variante" : selected ? variantLabel(selected) : "";
+  const query = plain(text).trim();
+  const matches = (
+    query
+      ? variants.filter((variant) =>
+          plain(
+            `${variant.product_name} ${variant.sku} ${variant.size_label} ${(variant.barcodes || []).join(" ")}`,
+          ).includes(query),
+        )
+      : variants
+  ).slice(0, 40);
+  const options = [
+    { id: "__new__", label: "Crea articolo e variante" },
+    ...matches.map((variant) => ({ id: variant.id, label: variantLabel(variant) })),
+  ];
+  const pick = (option) => {
+    onChange(option.id);
+    setOpen(false);
+    setText("");
+  };
+  return (
+    <span className="variant-picker">
+      <input
+        value={open ? text : shown}
+        placeholder="Seleziona articolo"
+        onFocus={() => {
+          setOpen(true);
+          setActive(0);
+        }}
+        onBlur={() => window.setTimeout(() => setOpen(false), 150)}
+        onChange={(event) => {
+          setText(event.target.value);
+          setActive(0);
+          setOpen(true);
+        }}
+        onKeyDown={(event) => {
+          if (!open) return;
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            setActive((index) => Math.min(options.length - 1, index + 1));
+          } else if (event.key === "ArrowUp") {
+            event.preventDefault();
+            setActive((index) => Math.max(0, index - 1));
+          } else if (event.key === "Enter") {
+            event.preventDefault();
+            if (options[active]) pick(options[active]);
+          } else if (event.key === "Escape") setOpen(false);
+        }}
+      />
+      {open && (
+        <span className="variant-picker-list" role="listbox">
+          {options.map((option, index) => (
+            <button
+              type="button"
+              role="option"
+              aria-selected={option.id === value}
+              key={option.id}
+              className={`${index === active ? "active" : ""}${option.id === "__new__" ? " create" : ""}`}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => pick(option)}
+            >
+              {option.label}
+            </button>
+          ))}
+          {query && !matches.length && <em>Nessun articolo trovato: crealo con la prima voce.</em>}
+        </span>
+      )}
+    </span>
+  );
+}
 
 function issueFields(issue) {
   const text = String(issue.message || "").toLocaleLowerCase("it-IT");
@@ -571,31 +747,108 @@ export default function DocumentsOcrPage() {
     setSkuLoading(true);
     try {
       const skus = await reserveSkus(missing, reviewSkus(review));
-      let skuIndex = 0;
-      changeReview((current) => ({
-        ...current,
-        items: current.items.map((item, index) =>
-          index !== itemIndex
-            ? item
-            : {
-                ...item,
-                new_variant: {
-                  ...item.new_variant,
-                  variants: item.new_variant.variants.map((variant) =>
-                    needsReservedSku(variant.sku, current._sku_sequence_committed)
-                      ? { ...variant, sku: skus[skuIndex++] }
-                      : variant,
-                  ),
+      // Il contatore sta dentro l'aggiornamento: React può eseguirlo due volte in sviluppo.
+      changeReview((current) => {
+        let skuIndex = 0;
+        return {
+          ...current,
+          items: current.items.map((item, index) =>
+            index !== itemIndex
+              ? item
+              : {
+                  ...item,
+                  new_variant: {
+                    ...item.new_variant,
+                    variants: item.new_variant.variants.map((variant) =>
+                      needsReservedSku(variant.sku, current._sku_sequence_committed)
+                        ? { ...variant, sku: skus[skuIndex++] }
+                        : variant,
+                    ),
+                  },
                 },
-              },
-        ),
-      }));
+          ),
+        };
+      });
     } catch (error) {
       setReviewError(`Impossibile generare gli SKU: ${error.message}`);
     } finally {
       setSkuLoading(false);
     }
   }
+  // Suggerimenti di abbinamento calcolati sulle righe in revisione.
+  const suggestions = useMemo(
+    () => (review?.items || []).map((item) => suggestionFor(item, variants, catalog.sizes)),
+    [review?.items, variants, catalog.sizes],
+  );
+  const sureMatches = (review?.items || [])
+    .map((item, index) => ({ item, index, hint: suggestions[index] }))
+    .filter(({ item, hint }) => item.accepted && !item.variant_id && hint?.sure);
+  function applySureMatches() {
+    const picks = new Map(sureMatches.map(({ index, hint }) => [index, hint.variant.id]));
+    changeReview((current) => ({
+      ...current,
+      items: current.items.map((item, index) =>
+        picks.has(index) ? { ...item, variant_id: picks.get(index) } : item,
+      ),
+    }));
+    notify(
+      `${picks.size} ${picks.size === 1 ? "riga abbinata" : "righe abbinate"} al catalogo. Controlla quantità e prezzi.`,
+    );
+  }
+  async function useExistingProduct(itemIndex, productId) {
+    if (review.items[itemIndex]?.variant_id !== "__new__") await chooseVariant(itemIndex, "__new__");
+    updateNewVariant(itemIndex, "product_id", productId);
+    // Stesso colore delle taglie già in catalogo: così le taglie esistenti vengono caricate su quelle.
+    const colors = [
+      ...new Set(
+        variants.filter((variant) => variant.product === productId).map((variant) => variant.color || ""),
+      ),
+    ];
+    if (colors.length === 1 && colors[0]) updateNewVariant(itemIndex, "color_id", colors[0]);
+  }
+  async function splitBySizes(itemIndex, sizes) {
+    const item = review.items[itemIndex];
+    const rows = item.new_variant.variants || [];
+    const total = Math.max(0, Math.round(amount(item.quantity)));
+    const each = Math.floor(total / sizes.length);
+    const rest = total - each * sizes.length;
+    setSkuLoading(true);
+    try {
+      // Le righe taglia già presenti vengono riusate (SKU, barcode e prezzo restano), le altre si aggiungono.
+      const missing = Math.max(0, sizes.length - rows.length);
+      const skus = missing ? await reserveSkus(missing, reviewSkus(review)) : [];
+      const price =
+        amount(item.unit_price) > 0 && amount(markup) > 0
+          ? money(amount(item.unit_price) * amount(markup))
+          : "";
+      const split = sizes.map((size, position) => ({
+        ...(rows[position] || { sku: skus[position - rows.length], barcode: "", sale_price: price }),
+        size_id: size.id,
+        quantity: total ? String(each + (position < rest ? 1 : 0)) : "",
+      }));
+      changeReview((current) => ({
+        ...current,
+        items: current.items.map((row, index) =>
+          index === itemIndex
+            ? {
+                ...row,
+                new_variant: { ...row.new_variant, variants: [...split, ...rows.slice(sizes.length)] },
+              }
+            : row,
+        ),
+      }));
+      notify(
+        total && rest
+          ? `Riga divisa su ${sizes.length} taglie: ${total} pezzi non si dividono in parti uguali, controlla ogni taglia.`
+          : `Riga divisa su ${sizes.length} taglie. Controlla le quantità di ogni taglia.`,
+      );
+    } catch (error) {
+      setReviewError(`Impossibile generare gli SKU: ${error.message}`);
+    } finally {
+      setSkuLoading(false);
+    }
+  }
+
   async function addVariantSize(itemIndex) {
     setSkuLoading(true);
     try {
@@ -1291,6 +1544,17 @@ export default function DocumentsOcrPage() {
                   <FieldErrors issues={fieldIssues(null, "season_year")} />
                 </label>
               </div>
+              {!imported && sureMatches.length > 0 && (
+                <div className="ocr-automatch">
+                  <span>
+                    <b>{sureMatches.length}</b> {sureMatches.length === 1 ? "riga ha" : "righe hanno"} lo
+                    stesso SKU o barcode di un articolo già in catalogo.
+                  </span>
+                  <button type="button" className="primary-action" onClick={applySureMatches}>
+                    Abbina automaticamente
+                  </button>
+                </div>
+              )}
               <div className="ocr-review-lines">
                 <div className="ocr-review-heading">
                   <span>Incl.</span>
@@ -1337,18 +1601,11 @@ export default function DocumentsOcrPage() {
                               : "ocr-control"
                           }
                         >
-                          <select
+                          <VariantPicker
                             value={item.variant_id}
-                            onChange={(event) => chooseVariant(index, event.target.value)}
-                          >
-                            <option value="">Seleziona articolo</option>
-                            <option value="__new__">Crea articolo e variante</option>
-                            {variants.map((variant) => (
-                              <option value={variant.id} key={variant.id}>
-                                {variant.product_name || "Articolo"} · {variant.sku}
-                              </option>
-                            ))}
-                          </select>
+                            variants={variants}
+                            onChange={(value) => chooseVariant(index, value)}
+                          />
                           <FieldErrors issues={fieldIssues(index, "variant_id")} />
                         </span>
                         <span
@@ -1387,6 +1644,41 @@ export default function DocumentsOcrPage() {
                           ×
                         </button>
                       </div>
+                      {!imported &&
+                        item.accepted &&
+                        (!item.variant_id ||
+                          (item.variant_id === "__new__" && !item.new_variant.product_id)) &&
+                        (() => {
+                          const hint = suggestions[index];
+                          if (!hint) return null;
+                          if (hint.kind === "variant" && !item.variant_id)
+                            return (
+                              <div className="ocr-suggestion">
+                                <span>
+                                  Suggerito ({hint.reason}): <b>{variantLabel(hint.variant)}</b>
+                                </span>
+                                <button type="button" onClick={() => chooseVariant(index, hint.variant.id)}>
+                                  Usa questo
+                                </button>
+                              </div>
+                            );
+                          if (hint.kind === "product")
+                            return (
+                              <div className="ocr-suggestion">
+                                <span>
+                                  In catalogo c'è già <b>{hint.productName}</b>
+                                  {hint.sizes.length ? ` (taglie ${hint.sizes.join(", ")})` : ""}.
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => useExistingProduct(index, hint.productId)}
+                                >
+                                  Aggiungi le taglie a questo prodotto
+                                </button>
+                              </div>
+                            );
+                          return null;
+                        })()}
                       {item.variant_id && item.variant_id !== "__new__" && (
                         <label
                           className={`ocr-item-details${fieldIssues(index, "sale_price").length ? " ocr-invalid" : ""}`}
@@ -1527,9 +1819,24 @@ export default function DocumentsOcrPage() {
                           <div className="ocr-variant-sizes">
                             <div className="ocr-variant-sizes-heading">
                               <strong>Taglie e quantità</strong>
-                              <button type="button" onClick={() => addVariantSize(index)}>
-                                <Plus size={15} /> Aggiungi taglia
-                              </button>
+                              <span className="ocr-size-actions">
+                                {(() => {
+                                  const found = sizesInDescription(item.description, catalog.sizes);
+                                  const current = (item.new_variant.variants || []).map(
+                                    (variant) => variant.size_id,
+                                  );
+                                  if (found.length < 2 || found.every((size) => current.includes(size.id)))
+                                    return null;
+                                  return (
+                                    <button type="button" onClick={() => splitBySizes(index, found)}>
+                                      Dividi in taglie: {found.map((size) => size.label).join(" · ")}
+                                    </button>
+                                  );
+                                })()}
+                                <button type="button" onClick={() => addVariantSize(index)}>
+                                  <Plus size={15} /> Aggiungi taglia
+                                </button>
+                              </span>
                             </div>
                             {(item.new_variant.variants || []).map((variant, variantIndex) => (
                               <div className="ocr-variant-size-row" key={variantIndex}>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarDays, ChevronDown, Download, Filter, Search, ShoppingBag, X } from "lucide-react";
+import { CalendarDays, ChevronDown, Download, Filter, RotateCcw, Search, ShoppingBag, X } from "lucide-react";
 import { downloadFile, request } from "../api";
 import PaginatedRows from "../components/PaginatedRows";
 import "../sales.css";
@@ -62,6 +62,27 @@ function periodRange(preset) {
     new Date(today.getFullYear(), today.getMonth(), 0),
   ];
 }
+const METHOD_LABELS = {
+  CASH: "Contanti",
+  CARD: "Carta",
+  GIFT_CARD: "Gift card",
+  STORE_CREDIT: "Buono reso",
+  OTHER: "Altro",
+};
+const QUICK_PERIODS = [
+  ["TODAY", "Oggi"],
+  ["YESTERDAY", "Ieri"],
+  ["LAST_7", "Ultimi 7 giorni"],
+  ["CURRENT_MONTH", "Questo mese"],
+];
+const statusLabel = (status) =>
+  status === "CONFIRMED" ? "Conclusa" : status === "CANCELLED" ? "Annullata" : "Aperta";
+const methodsOf = (sale) =>
+  [...new Set((sale.payments || []).map((payment) => METHOD_LABELS[payment.method] || payment.method))].join(
+    " + ",
+  );
+const piecesOf = (sale) => (sale.lines || []).reduce((sum, line) => sum + Number(line.quantity || 0), 0);
+
 function SelectField({ label, value, onChange, options }) {
   return (
     <label className="history-filter-field">
@@ -86,6 +107,7 @@ export default function SalesPage({ onStartReturn }) {
   const [periodOpen, setPeriodOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [periodDraft, setPeriodDraft] = useState({ dateFrom: "", dateTo: "", preset: "" });
+  const [selectedId, setSelectedId] = useState(null);
   const [options, setOptions] = useState({
     brands: [],
     categories: [],
@@ -117,7 +139,11 @@ export default function SalesPage({ onStartReturn }) {
     setLoading(true);
     setError("");
     request(`/sales/sales/?${query}&page_size=200`)
-      .then((payload) => setSales(listItems(payload)))
+      .then((payload) => {
+        const rows = listItems(payload);
+        setSales(rows);
+        setSelectedId((current) => (rows.some((sale) => sale.id === current) ? current : null));
+      })
       .catch(() => setError("Non è stato possibile caricare lo storico vendite."))
       .finally(() => setLoading(false));
   }, [query]);
@@ -140,6 +166,25 @@ export default function SalesPage({ onStartReturn }) {
       )
       .catch(() => {});
   }, []);
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.key === "Escape" && selectedId && !periodOpen) setSelectedId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedId, periodOpen]);
+  const selected = sales.find((sale) => sale.id === selectedId) || null;
+  const confirmed = sales.filter((sale) => sale.status === "CONFIRMED");
+  const confirmedTotal = confirmed.reduce((sum, sale) => sum + Number(sale.final_total_amount || 0), 0);
+  const activeQuick = QUICK_PERIODS.find(([preset]) => {
+    const [from, to] = periodRange(preset);
+    return filters.dateFrom === asInputDate(from) && filters.dateTo === asInputDate(to);
+  })?.[0];
+  function quickPeriod(preset) {
+    if (!preset) return setFilters((current) => ({ ...current, dateFrom: "", dateTo: "" }));
+    const [from, to] = periodRange(preset);
+    setFilters((current) => ({ ...current, dateFrom: asInputDate(from), dateTo: asInputDate(to) }));
+  }
   function updateFilter(key, value) {
     setFilters((current) => ({ ...current, [key]: value }));
   }
@@ -199,6 +244,33 @@ export default function SalesPage({ onStartReturn }) {
         >
           <Filter size={17} /> Filtri <ChevronDown size={15} />
         </button>
+      </div>
+      <div className="history-quickbar">
+        <div className="seg" role="group" aria-label="Periodi rapidi">
+          {QUICK_PERIODS.map(([preset, label]) => (
+            <button
+              key={preset}
+              type="button"
+              aria-pressed={activeQuick === preset}
+              onClick={() => quickPeriod(preset)}
+            >
+              {label}
+            </button>
+          ))}
+          <button
+            type="button"
+            aria-pressed={!filters.dateFrom && !filters.dateTo}
+            onClick={() => quickPeriod("")}
+          >
+            Sempre
+          </button>
+        </div>
+        {!loading && !error && (
+          <span className="history-summary">
+            <b>{confirmed.length}</b> {confirmed.length === 1 ? "vendita conclusa" : "vendite concluse"} ·{" "}
+            <b>{euro.format(confirmedTotal)}</b>
+          </span>
+        )}
       </div>
       {filtersOpen && (
         <div className="history-filters-panel">
@@ -335,53 +407,165 @@ export default function SalesPage({ onStartReturn }) {
           </aside>
         </div>
       )}
-      <article className="sales-list-panel">
-        <div className="sales-list-heading">
-          <span>Vendita</span>
-          <span>Stato</span>
-          <span>Totale</span>
-        </div>
-        {loading && <p className="sales-empty">Caricamento vendite...</p>}
-        {error && <p className="sales-error">{error}</p>}
-        {!loading && !error && !sales.length && (
-          <p className="sales-empty">Nessuna vendita corrisponde ai filtri scelti.</p>
-        )}
-        {!loading && !error && (
-          <PaginatedRows items={sales} resetKey={query}>
-            {(rows) =>
-              rows.map((sale) => (
-                <button
-                  className="sales-list-row sales-record"
-                  key={sale.id}
-                  disabled={sale.status !== "CONFIRMED"}
-                  title={
-                    sale.status === "CONFIRMED"
-                      ? "Apri vendita e avvia un reso"
-                      : "Un reso richiede una vendita conclusa"
-                  }
-                  onClick={() => onStartReturn?.(sale)}
-                >
-                  <div>
-                    <strong>{sale.number || "Bozza senza numero"}</strong>
-                    <span>
-                      {sale.customer_name || "Vendita banco"} ·{" "}
-                      {dateFormatter.format(new Date(sale.confirmed_at || sale.opened_at))}
+      <div className={`sales-split${selected ? " has-detail" : ""}`}>
+        <article className="sales-list-panel">
+          <div className="sales-list-heading">
+            <span>Vendita</span>
+            <span>Stato</span>
+            <span>Totale</span>
+          </div>
+          {loading && <p className="sales-empty">Caricamento vendite...</p>}
+          {error && <p className="sales-error">{error}</p>}
+          {!loading && !error && !sales.length && (
+            <p className="sales-empty">Nessuna vendita corrisponde ai filtri scelti.</p>
+          )}
+          {!loading && !error && sales.length > 0 && (
+            <PaginatedRows items={sales} resetKey={query}>
+              {(rows) =>
+                rows.map((sale) => (
+                  <button
+                    className={`sales-list-row sales-record${sale.id === selectedId ? " selected" : ""}`}
+                    key={sale.id}
+                    title="Apri il dettaglio della vendita"
+                    aria-pressed={sale.id === selectedId}
+                    onClick={() => setSelectedId(sale.id === selectedId ? null : sale.id)}
+                  >
+                    <div>
+                      <strong>{sale.number || "Bozza senza numero"}</strong>
+                      <span>
+                        {sale.customer_name || "Vendita banco"} ·{" "}
+                        {dateFormatter.format(new Date(sale.confirmed_at || sale.opened_at))}
+                        {piecesOf(sale)
+                          ? ` · ${piecesOf(sale)} ${piecesOf(sale) === 1 ? "pezzo" : "pezzi"}`
+                          : ""}
+                        {methodsOf(sale) ? ` · ${methodsOf(sale)}` : ""}
+                      </span>
+                    </div>
+                    <span className={`status-pill ${sale.status.toLowerCase()}`}>
+                      {statusLabel(sale.status)}
                     </span>
-                  </div>
-                  <span className={`status-pill ${sale.status.toLowerCase()}`}>
-                    {sale.status === "CONFIRMED"
-                      ? "Conclusa"
-                      : sale.status === "CANCELLED"
-                        ? "Annullata"
-                        : "Aperta"}
+                    <strong>{euro.format(Number(sale.final_total_amount))}</strong>
+                  </button>
+                ))
+              }
+            </PaginatedRows>
+          )}
+        </article>
+        {selected && (
+          <aside className="sale-detail" aria-label={`Dettaglio vendita ${selected.number || ""}`}>
+            <header>
+              <div>
+                <p className="eyebrow">Dettaglio vendita</p>
+                <h3>{selected.number || "Bozza senza numero"}</h3>
+                <span>{dateFormatter.format(new Date(selected.confirmed_at || selected.opened_at))}</span>
+              </div>
+              <button
+                type="button"
+                className="sale-detail-close"
+                aria-label="Chiudi"
+                onClick={() => setSelectedId(null)}
+              >
+                <X size={18} />
+              </button>
+            </header>
+            <dl className="sale-detail-facts">
+              <div>
+                <dt>Stato</dt>
+                <dd>
+                  <span className={`status-pill ${selected.status.toLowerCase()}`}>
+                    {statusLabel(selected.status)}
                   </span>
-                  <strong>{euro.format(Number(sale.final_total_amount))}</strong>
-                </button>
-              ))
-            }
-          </PaginatedRows>
+                </dd>
+              </div>
+              <div>
+                <dt>Cliente</dt>
+                <dd>{selected.customer_name || "Vendita banco"}</dd>
+              </div>
+              <div>
+                <dt>Cassa</dt>
+                <dd>
+                  {[selected.cash_register_name, selected.location_name].filter(Boolean).join(" · ") || "—"}
+                </dd>
+              </div>
+              <div>
+                <dt>Pagamento</dt>
+                <dd>{methodsOf(selected) || "—"}</dd>
+              </div>
+            </dl>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Articolo</th>
+                  <th>Taglia</th>
+                  <th className="num">Q.tà</th>
+                  <th className="num">Prezzo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(selected.lines || []).map((line) => (
+                  <tr key={line.id}>
+                    <td>
+                      <b>{line.product_name_snapshot}</b>
+                      <small className="sale-line-sku">
+                        {[line.sku_snapshot, line.color_snapshot].filter(Boolean).join(" · ")}
+                      </small>
+                    </td>
+                    <td>{line.size_snapshot || "—"}</td>
+                    <td className="num">{line.quantity}</td>
+                    <td className="num">
+                      {euro.format(
+                        Number(line.final_unit_price ?? line.base_unit_price ?? 0) *
+                          Number(line.quantity || 0),
+                      )}
+                      {Number(line.discount_amount) > 0 && (
+                        <small className="sale-line-discount">
+                          sconto {euro.format(Number(line.discount_amount))}
+                        </small>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {!(selected.lines || []).length && (
+                  <tr>
+                    <td colSpan={4} className="empty-note">
+                      Nessun articolo in questa vendita.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+            <div className="sale-detail-totals">
+              {Number(selected.discount_amount) > 0 && (
+                <div>
+                  <span>Sconti</span>
+                  <span>−{euro.format(Number(selected.discount_amount))}</span>
+                </div>
+              )}
+              <div className="total">
+                <span>Totale</span>
+                <b>{euro.format(Number(selected.final_total_amount || 0))}</b>
+              </div>
+              {(selected.payments || []).map((payment) => (
+                <div key={payment.id}>
+                  <span>{METHOD_LABELS[payment.method] || payment.method}</span>
+                  <span>{euro.format(Number(payment.amount || 0))}</span>
+                </div>
+              ))}
+            </div>
+            {selected.status === "CONFIRMED" ? (
+              <button
+                type="button"
+                className="primary-action sale-detail-return"
+                onClick={() => onStartReturn?.(selected)}
+              >
+                <RotateCcw size={17} /> Avvia un reso
+              </button>
+            ) : (
+              <p className="sale-detail-note">Un reso richiede una vendita conclusa.</p>
+            )}
+          </aside>
         )}
-      </article>
+      </div>
       <div className="sales-count">
         <ShoppingBag size={16} /> {sales.length} vendite visualizzate
       </div>

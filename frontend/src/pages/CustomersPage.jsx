@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Download, Pencil, Plus, Search, Trash2, UsersRound } from "lucide-react";
 import { request } from "../api";
+import CustomerCard from "../components/CustomerCard";
 import PaginatedRows from "../components/PaginatedRows";
 import "../products.css";
 
@@ -17,6 +18,7 @@ export default function CustomersPage() {
   const [isSuccess, setIsSuccess] = useState(false);
   const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState([]);
+  const [openId, setOpenId] = useState(null);
   const load = async (search = query) => {
     try {
       setCustomers(
@@ -245,67 +247,86 @@ export default function CustomersPage() {
           </button>
         </div>
       )}
-      <article className="products-list">
-        <div className="customer-heading">
-          <span className="table-row-check">
-            <input
-              type="checkbox"
-              aria-label="Seleziona tutti i clienti"
-              checked={customers.length > 0 && selected.length === customers.length}
-              onChange={toggleAll}
-            />
-          </span>
-          <span>Cliente</span>
-          <span>Contatti</span>
-          <span>Data di nascita</span>
-          <span>Azioni</span>
-        </div>
-        {!customers.length ? (
-          <div className="empty-product-state">
-            <UsersRound size={28} />
-            <strong>Nessun cliente trovato</strong>
-            <span>Registra una nuova anagrafica per associarla a vendite, resi e buoni.</span>
+      <div
+        className={`sales-split${openId && customers.some((item) => item.id === openId) ? " has-detail" : ""}`}
+      >
+        <article className="products-list">
+          <div className="customer-heading">
+            <span className="table-row-check">
+              <input
+                type="checkbox"
+                aria-label="Seleziona tutti i clienti"
+                checked={customers.length > 0 && selected.length === customers.length}
+                onChange={toggleAll}
+              />
+            </span>
+            <span>Cliente</span>
+            <span>Contatti</span>
+            <span>Data di nascita</span>
+            <span>Azioni</span>
           </div>
-        ) : (
-          <PaginatedRows items={customers} resetKey={query}>
-            {(rows) =>
-              rows.map((customer) => (
-                <div
-                  className={selected.includes(customer.id) ? "customer-row selected" : "customer-row"}
-                  key={customer.id}
-                >
-                  <span className="table-row-check">
-                    <input
-                      type="checkbox"
-                      aria-label={`Seleziona ${customer.full_name}`}
-                      checked={selected.includes(customer.id)}
-                      onChange={() => toggleSelected(customer.id)}
-                    />
-                  </span>
-                  <div>
-                    <strong>{customer.full_name}</strong>
-                    <span>{customer.customer_code}</span>
+          {!customers.length ? (
+            <div className="empty-product-state">
+              <UsersRound size={28} />
+              <strong>Nessun cliente trovato</strong>
+              <span>Registra una nuova anagrafica per associarla a vendite, resi e buoni.</span>
+            </div>
+          ) : (
+            <PaginatedRows items={customers} resetKey={query}>
+              {(rows) =>
+                rows.map((customer) => (
+                  <div
+                    className={`customer-row${selected.includes(customer.id) ? " selected" : ""}${
+                      customer.id === openId ? " open" : ""
+                    }`}
+                    key={customer.id}
+                  >
+                    <span className="table-row-check">
+                      <input
+                        type="checkbox"
+                        aria-label={`Seleziona ${customer.full_name}`}
+                        checked={selected.includes(customer.id)}
+                        onChange={() => toggleSelected(customer.id)}
+                      />
+                    </span>
+                    <div>
+                      <button
+                        type="button"
+                        className="customer-open"
+                        title="Apri la scheda del cliente"
+                        onClick={() => setOpenId(customer.id === openId ? null : customer.id)}
+                      >
+                        {customer.full_name}
+                      </button>
+                      <span>{customer.customer_code}</span>
+                    </div>
+                    <span>{customer.phone || customer.email || "Nessun contatto"}</span>
+                    <b>
+                      {customer.birth_date
+                        ? new Intl.DateTimeFormat("it-IT").format(new Date(`${customer.birth_date}T00:00:00`))
+                        : "Non indicata"}
+                    </b>
+                    <div className="customer-actions">
+                      <button title="Modifica cliente" onClick={() => openEdit(customer)}>
+                        <Pencil size={16} />
+                      </button>
+                      <button title="Elimina cliente" onClick={() => remove(customer)}>
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
                   </div>
-                  <span>{customer.phone || customer.email || "Nessun contatto"}</span>
-                  <b>
-                    {customer.birth_date
-                      ? new Intl.DateTimeFormat("it-IT").format(new Date(`${customer.birth_date}T00:00:00`))
-                      : "Non indicata"}
-                  </b>
-                  <div className="customer-actions">
-                    <button title="Modifica cliente" onClick={() => openEdit(customer)}>
-                      <Pencil size={16} />
-                    </button>
-                    <button title="Elimina cliente" onClick={() => remove(customer)}>
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                </div>
-              ))
-            }
-          </PaginatedRows>
-        )}
-      </article>
+                ))
+              }
+            </PaginatedRows>
+          )}
+        </article>
+        {(() => {
+          const open = customers.find((item) => item.id === openId);
+          return open ? (
+            <CustomerCard customer={open} onClose={() => setOpenId(null)} onEdit={() => openEdit(open)} />
+          ) : null;
+        })()}
+      </div>
     </section>
   );
 }

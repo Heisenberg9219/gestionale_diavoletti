@@ -63,6 +63,7 @@ class SaleViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         filters_by_parameter = {
             "status": "status",
+            "customer": "customer_id",
             "channel": "channel",
             "location": "location_id",
             "cash_register": "cash_session__cash_register_id",

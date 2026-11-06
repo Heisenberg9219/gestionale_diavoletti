@@ -23,6 +23,8 @@ export default function CashPage({ onNavigate }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [sessionSales, setSessionSales] = useState(null);
+  const [salesFilter, setSalesFilter] = useState("ALL");
 
   async function loadCash() {
     setLoading(true);
@@ -49,6 +51,22 @@ export default function CashPage({ onNavigate }) {
   useEffect(() => {
     loadCash();
   }, []);
+
+  // Incassi della sessione aperta: le vendite confermate di questo registratore da quando è aperta.
+  useEffect(() => {
+    if (!session) {
+      setSessionSales(null);
+      return;
+    }
+    const day = session.opened_at.slice(0, 10);
+    request(
+      `/sales/sales/?status=CONFIRMED&cash_register=${session.cash_register}&date_from=${day}&page_size=200`,
+    )
+      .then((payload) =>
+        setSessionSales(collection(payload).filter((sale) => sale.cash_session === session.id)),
+      )
+      .catch(() => setSessionSales([]));
+  }, [session]);
 
   async function openSession(event) {
     event.preventDefault();
@@ -132,73 +150,179 @@ export default function CashPage({ onNavigate }) {
         <p className="cash-error">{error}</p>
       ) : session ? (
         <>
-          <article className="cash-session-card">
-            <div className="cash-session-status">
-              <span>
-                <CircleCheck size={18} /> Sessione aperta
-              </span>
-              <strong>{activeRegister?.name || "Registratore"}</strong>
-            </div>
-            <div className="cash-session-values cash-session-payment-values">
-              <div>
-                <p>Fondo iniziale</p>
-                <strong>{euro.format(Number(session.opening_cash_amount))}</strong>
-              </div>
-              <div>
-                <p>Pagamenti contanti</p>
-                <strong>{euro.format(Number(session.cash_payments_total || 0))}</strong>
-              </div>
-              <div>
-                <p>Pagamenti carta</p>
-                <strong>{euro.format(Number(session.card_payments_total || 0))}</strong>
-              </div>
-              <div>
-                <p>Liste regalo e buoni (contanti)</p>
-                <strong>{euro.format(Number(session.other_cash_total || 0))}</strong>
-              </div>
-              <div>
-                <p>Contante previsto</p>
-                <strong>
-                  {euro.format(
-                    session.expected_cash_amount != null
-                      ? Number(session.expected_cash_amount)
-                      : Number(session.opening_cash_amount || 0) +
-                          Number(session.cash_payments_total || 0) +
-                          Number(session.other_cash_total || 0),
-                  )}
-                </strong>
-              </div>
-              <div>
-                <p>Aperta alle</p>
-                <strong>
-                  {new Intl.DateTimeFormat("it-IT", { hour: "2-digit", minute: "2-digit" }).format(
-                    new Date(session.opened_at),
-                  )}
-                </strong>
-              </div>
-            </div>
-          </article>
-          <form className="cash-close-card" onSubmit={closeSession}>
-            <div>
-              <p className="eyebrow">Fine turno</p>
-              <h3>Chiudi la cassa</h3>
-              <span>Inserisci il contante effettivamente contato.</span>
-            </div>
-            <label>
-              Contante contato
-              <input
-                required
-                inputMode="decimal"
-                value={countedAmount}
-                onChange={(event) => setCountedAmount(event.target.value)}
-                placeholder="0,00"
-              />
-            </label>
-            <button className="secondary-action" disabled={saving}>
-              <LockKeyhole size={18} />
-              {saving ? "Chiusura..." : "Conferma chiusura"}
-            </button>
-          </form>
+          {(() => {
+            const expected =
+              session.expected_cash_amount != null
+                ? Number(session.expected_cash_amount)
+                : Number(session.opening_cash_amount || 0) +
+                  Number(session.cash_payments_total || 0) +
+                  Number(session.other_cash_total || 0);
+            const counted = Number(String(countedAmount).replace(",", "."));
+            const hasCount = countedAmount.trim() !== "" && Number.isFinite(counted);
+            const difference = hasCount ? Math.round((counted - expected) * 100) / 100 : null;
+            const sales = sessionSales || [];
+            const methodsOf = (sale) => new Set((sale.payments || []).map((payment) => payment.method));
+            const cashCount = sales.filter((sale) => methodsOf(sale).has("CASH")).length;
+            const cardCount = sales.filter((sale) => methodsOf(sale).has("CARD")).length;
+            const shown = sales.filter((sale) => salesFilter === "ALL" || methodsOf(sale).has(salesFilter));
+            const methodLabel = (sale) =>
+              [...methodsOf(sale)]
+                .map(
+                  (method) =>
+                    ({ CASH: "Contanti", CARD: "Carta", GIFT_CARD: "Gift card", STORE_CREDIT: "Buono reso" })[
+                      method
+                    ] || "Altro",
+                )
+                .join(" + ") || "—";
+            return (
+              <>
+                <article className="cash-session-status-row">
+                  <span className="cash-pill open">
+                    <i aria-hidden="true" />
+                    <CircleCheck size={16} /> Sessione aperta · {activeRegister?.name || "Registratore"}
+                  </span>
+                </article>
+                <div className="cash-kpis cash-session-values cash-session-payment-values">
+                  <div className="cash-kpi">
+                    <p>Fondo iniziale</p>
+                    <strong>{euro.format(Number(session.opening_cash_amount))}</strong>
+                    <small>
+                      Aperta alle{" "}
+                      {new Intl.DateTimeFormat("it-IT", { hour: "2-digit", minute: "2-digit" }).format(
+                        new Date(session.opened_at),
+                      )}
+                    </small>
+                  </div>
+                  <div className="cash-kpi">
+                    <p>Pagamenti contanti</p>
+                    <strong>{euro.format(Number(session.cash_payments_total || 0))}</strong>
+                    {sessionSales && <small>{cashCount} vendite</small>}
+                  </div>
+                  <div className="cash-kpi">
+                    <p>Pagamenti carta</p>
+                    <strong>{euro.format(Number(session.card_payments_total || 0))}</strong>
+                    {sessionSales && <small>{cardCount} vendite</small>}
+                  </div>
+                  <div className="cash-kpi">
+                    <p>Liste regalo e buoni (contanti)</p>
+                    <strong>{euro.format(Number(session.other_cash_total || 0))}</strong>
+                  </div>
+                  <div className="cash-kpi total">
+                    <p>Contante previsto</p>
+                    <strong>{euro.format(expected)}</strong>
+                    <small>fondo + contanti + buoni</small>
+                  </div>
+                </div>
+                <div className="cash-columns">
+                  <section className="cash-panel wide" aria-label="Incassi della sessione">
+                    <div className="cash-panel-head">
+                      <h3>Incassi della sessione</h3>
+                      <div className="seg" role="group" aria-label="Filtra per metodo">
+                        {[
+                          ["ALL", "Tutti"],
+                          ["CASH", "Contanti"],
+                          ["CARD", "Carta"],
+                        ].map(([value, label]) => (
+                          <button
+                            key={value}
+                            type="button"
+                            aria-pressed={salesFilter === value}
+                            onClick={() => setSalesFilter(value)}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {sessionSales === null ? (
+                      <p className="empty-note">Caricamento incassi…</p>
+                    ) : shown.length ? (
+                      <div className="table-scroll">
+                        <table className="data-table">
+                          <thead>
+                            <tr>
+                              <th>Ora</th>
+                              <th>Scontrino</th>
+                              <th>Cliente</th>
+                              <th>Metodo</th>
+                              <th className="num">Importo</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {shown.map((sale) => (
+                              <tr key={sale.id}>
+                                <td className="tabular">
+                                  {new Intl.DateTimeFormat("it-IT", {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  }).format(new Date(sale.confirmed_at || sale.opened_at))}
+                                </td>
+                                <td>
+                                  <b>{sale.number}</b>
+                                </td>
+                                <td>{sale.customer_name || "Vendita banco"}</td>
+                                <td>{methodLabel(sale)}</td>
+                                <td className="num">{euro.format(Number(sale.final_total_amount || 0))}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="empty-note">
+                        {sales.length
+                          ? "Nessun incasso con questo metodo."
+                          : "Nessuna vendita ancora in questa sessione. Le vendite confermate compaiono qui."}
+                      </p>
+                    )}
+                  </section>
+                  <form className="cash-panel side cash-close-card" onSubmit={closeSession}>
+                    <div>
+                      <p className="eyebrow">Fine turno</p>
+                      <h3>Chiudi la cassa</h3>
+                      <span>Inserisci il contante effettivamente contato.</span>
+                    </div>
+                    <label>
+                      Contante contato
+                      <input
+                        required
+                        inputMode="decimal"
+                        value={countedAmount}
+                        onChange={(event) => setCountedAmount(event.target.value)}
+                        placeholder="0,00"
+                      />
+                    </label>
+                    {difference !== null && (
+                      <div className={`cash-diff ${difference === 0 ? "even" : "off"}`} role="status">
+                        <div>
+                          <span>Contante previsto</span>
+                          <span className="money">{euro.format(expected)}</span>
+                        </div>
+                        <div>
+                          <b>Differenza</b>
+                          <b className="money">
+                            {difference > 0 ? "+" : ""}
+                            {euro.format(difference)}
+                          </b>
+                        </div>
+                        <span>
+                          {difference === 0
+                            ? "Il contante torna con il previsto."
+                            : difference < 0
+                              ? `Mancano ${euro.format(-difference)} rispetto al previsto: ricontrolla prima di confermare.`
+                              : `Ci sono ${euro.format(difference)} in più rispetto al previsto: ricontrolla prima di confermare.`}
+                        </span>
+                      </div>
+                    )}
+                    <button className="primary-action" disabled={saving} style={{ justifyContent: "center" }}>
+                      <LockKeyhole size={18} />
+                      {saving ? "Chiusura..." : "Conferma chiusura"}
+                    </button>
+                  </form>
+                </div>
+              </>
+            );
+          })()}
         </>
       ) : (
         <article className="cash-open-card">

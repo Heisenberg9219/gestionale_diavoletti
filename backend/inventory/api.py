@@ -24,14 +24,38 @@ class InventoryReadViewSet(viewsets.ReadOnlyModelViewSet):
 class StockBalanceViewSet(InventoryReadViewSet):
     queryset = StockBalance.objects.select_related("variant", "variant__product", "variant__size", "location")
     serializer_class = StockBalanceSerializer
-    search_fields = ("variant__sku", "variant__product__name", "location__name")
+    search_fields = ("variant__sku", "variant__product__name", "location__name", "variant__barcodes__code")
     ordering_fields = ("quantity_on_hand", "updated_at")
+    # Soglia "pochi pezzi" usata da filtro e riepilogo del Magazzino.
+    LOW_STOCK_MAX = 2
+
     def get_queryset(self):
         queryset = super().get_queryset()
         if location := self.request.query_params.get("location"): queryset = queryset.filter(location_id=location)
         if variant := self.request.query_params.get("variant"): queryset = queryset.filter(variant_id=variant)
         if self.request.query_params.get("depleted") == "true": queryset = queryset.filter(quantity_on_hand=0)
-        return queryset
+        level = self.request.query_params.get("level") if self.action != "summary" else None
+        if level == "available": queryset = queryset.filter(quantity_on_hand__gt=self.LOW_STOCK_MAX)
+        elif level == "low": queryset = queryset.filter(quantity_on_hand__gt=0, quantity_on_hand__lte=self.LOW_STOCK_MAX)
+        elif level == "zero": queryset = queryset.filter(quantity_on_hand__lte=0)
+        # La ricerca per barcode passa da una relazione molti-a-uno: niente righe doppie.
+        if self.request.query_params.get("search"): queryset = queryset.distinct()
+        return queryset.order_by("variant__product__name", "variant__sku", "location__name")
+
+    @action(detail=False, methods=("get",))
+    def summary(self, request):
+        """Quante giacenze ci sono per livello, con gli stessi filtri dell'elenco (sede, ricerca)."""
+        from django.db.models import Count, Q
+        matching = self.filter_queryset(self.get_queryset()).order_by().values("pk")
+        queryset = StockBalance.objects.filter(pk__in=matching)
+        low = self.LOW_STOCK_MAX
+        counts = queryset.aggregate(
+            total=Count("pk"),
+            available=Count("pk", filter=Q(quantity_on_hand__gt=low)),
+            low=Count("pk", filter=Q(quantity_on_hand__gt=0, quantity_on_hand__lte=low)),
+            zero=Count("pk", filter=Q(quantity_on_hand__lte=0)),
+        )
+        return Response({**counts, "low_stock_max": low})
 
     @action(detail=True, methods=("post",), permission_classes=(IsOwner,))
     def transfer(self, request, pk=None):

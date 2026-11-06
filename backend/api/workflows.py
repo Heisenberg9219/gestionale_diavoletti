@@ -554,8 +554,9 @@ def reorder_viewset(base):
     @action(detail=False,methods=("post",))
     def add(self,request):
         supplier=request.data.get("supplier")
-        obj=add_to_reorder_list(variant=get_object_or_404(ProductVariant,pk=required(request.data,"variant")),location=get_object_or_404(Location,pk=required(request.data,"location")),added_by=request.user,requested_quantity=request.data.get("requested_quantity"),supplier=get_object_or_404(Supplier,pk=supplier) if supplier else None,reason=request.data.get("reason",""),notes=request.data.get("notes",""))
-        return Response(self.get_serializer(obj).data,status=201)
+        obj, created = add_to_reorder_list(variant=get_object_or_404(ProductVariant,pk=required(request.data,"variant")),location=get_object_or_404(Location,pk=required(request.data,"location")),added_by=request.user,requested_quantity=request.data.get("requested_quantity"),supplier=get_object_or_404(Supplier,pk=supplier) if supplier else None,reason=request.data.get("reason",""),notes=request.data.get("notes",""))
+        # Il servizio restituisce (riga, creata): un articolo già in lista non viene duplicato.
+        return Response(self.get_serializer(obj).data,status=201 if created else 200)
     @action(detail=True,methods=("post",),url_path="update-pending")
     def update_pending(self,request,pk=None):
         supplier=request.data.get("supplier")
@@ -572,6 +573,30 @@ def reorder_viewset(base):
     @action(detail=False, methods=("post",), url_path="refresh-notifications")
     def refresh_notifications(self, request): return Response({"count": len(generate_reorder_notifications(users=(request.user,)))})
     base.add=add; base.update_pending=update_pending; base.remove=remove; base.link=link; base.complete=complete; base.grouped=grouped; base.refresh_notifications=refresh_notifications
+
+    # Righe leggibili: nome articolo, taglia, sede, fornitore e giacenza attuale nella sede.
+    class ReorderItemReadableSerializer(base.serializer_class):
+        variant_sku = serializers.CharField(source="variant.sku", read_only=True)
+        product_name = serializers.CharField(source="variant.product.name", read_only=True)
+        size_label = serializers.CharField(source="variant.size.label", read_only=True, default="")
+        color_name = serializers.CharField(source="variant.color.name", read_only=True, default="")
+        location_name = serializers.CharField(source="location.name", read_only=True)
+        supplier_name = serializers.SerializerMethodField()
+        stock_quantity = serializers.SerializerMethodField()
+
+        class Meta(base.serializer_class.Meta):
+            pass
+
+        def get_supplier_name(self, obj):
+            return obj.supplier.business_name if obj.supplier_id else ""
+
+        def get_stock_quantity(self, obj):
+            from inventory.models import StockBalance
+            balance = StockBalance.objects.filter(variant_id=obj.variant_id, location_id=obj.location_id).values_list("quantity_on_hand", flat=True).first()
+            return balance or 0
+
+    base.serializer_class = ReorderItemReadableSerializer
+    base.queryset = base.queryset.select_related("variant__product", "variant__size", "variant__color", "location", "supplier")
     return base
 
 
