@@ -1572,3 +1572,125 @@ kbd,
   font-family: var(--mono);
   text-align: center;
 }
+
+/* ---------- Documenti e OCR: abbinamento al catalogo ---------- */
+.variant-picker {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+.variant-picker > input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.variant-picker-list {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  width: max(100%, 380px);
+  max-height: 300px;
+  overflow-y: auto;
+  display: grid;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 14px 36px rgba(23, 19, 26, 0.16);
+}
+.variant-picker-list button {
+  border: 0;
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: transparent;
+  color: var(--ink);
+  font: 13px/1.35 inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.variant-picker-list button.active,
+.variant-picker-list button:hover {
+  background: var(--bg);
+}
+.variant-picker-list button[aria-selected="true"] {
+  font-weight: 700;
+}
+.variant-picker-list button.create {
+  color: var(--red);
+  font-weight: 700;
+  border-bottom: 1px solid var(--line);
+  border-radius: 7px 7px 0 0;
+}
+.variant-picker-list em {
+  padding: 8px 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.ocr-suggestion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: -2px 26px 10px 93px;
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: #eef4fb;
+  color: #24486e;
+  font-size: 13px;
+}
+.ocr-suggestion button,
+.ocr-size-actions button:first-child:not(:last-child) {
+  border: 1px solid currentColor;
+  border-radius: 7px;
+  padding: 5px 10px;
+  background: var(--surface);
+  color: inherit;
+  font: 600 12px inherit;
+  font-family: inherit;
+  cursor: pointer;
+}
+.ocr-size-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ocr-size-actions button:first-child:not(:last-child) {
+  color: #24486e;
+  background: #eef4fb;
+  border-color: #b9cde4;
+}
+.ocr-automatch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 12px 16px;
+  border: 1px solid #b9cde4;
+  border-radius: var(--radius-sm);
+  background: #eef4fb;
+  color: #24486e;
+}
+@media (max-width: 900px) {
+  .ocr-suggestion {
+    margin-left: 26px;
+  }
+}
+
+/* Finestre a tutto schermo sopra la barra in alto (che resta fissa a z-index 40) */
+.period-layer,
+.gift-detail-layer,
+.ocr-review-layer,
+.ocr-review-progress,
+.catalog-modal-layer,
+.payment-layer:not(.checkout-docked) {
+  z-index: 110;
+}
+.documents-toast {
+  z-index: 115;
+}
+.app-dialog-layer {
+  z-index: 140;
+}
