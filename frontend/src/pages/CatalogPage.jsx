@@ -38,6 +38,8 @@ const blank = {
   purchase_price: "",
   sale_price: "",
   current_sale_price: "",
+  quantity: "",
+  location: "",
 };
 const blankBulk = {
   brand: "",
@@ -117,8 +119,9 @@ export default function CatalogPage({ canSeeCosts = false }) {
       request("/catalog/sizes/?active=true"),
       request("/catalog/colors/?active=true"),
       request("/core/settings/"),
+      request("/core/locations/").catch(() => []),
     ])
-      .then(([brands, categories, seasons, taxes, sizes, colors, settings]) => {
+      .then(([brands, categories, seasons, taxes, sizes, colors, settings, locations]) => {
         setOptions({
           brands: list(brands),
           categories: list(categories),
@@ -126,6 +129,7 @@ export default function CatalogPage({ canSeeCosts = false }) {
           taxes: list(taxes),
           sizes: list(sizes),
           colors: list(colors),
+          locations: list(locations).filter((location) => location.is_active !== false),
         });
         const markup = Number(list(settings)[0]?.default_markup);
         if (Number.isFinite(markup) && markup > 0) setDefaultMarkup(markup);
@@ -351,10 +355,24 @@ export default function CatalogPage({ canSeeCosts = false }) {
           body: JSON.stringify({ variant: variantId, amount: form.sale_price, source: "MANUAL" }),
         });
       }
+      // Nuovo articolo con quantità: carico iniziale, così è subito vendibile.
+      let stockError = "";
+      const quantity = Number(form.quantity);
+      if (!editing && quantity > 0) {
+        try {
+          await request(`/catalog/variants/${variantId}/initial-stock/`, {
+            method: "POST",
+            body: JSON.stringify({ quantity, location: form.location || options.locations?.[0]?.id || null }),
+          });
+        } catch (requestError) {
+          stockError = `Articolo creato, ma la quantità non è stata caricata: ${requestError.message} Puoi caricarla dal Magazzino.`;
+        }
+      }
       setOpen(false);
       setEditing(null);
       setForm(blank);
       load();
+      if (stockError) setError(stockError);
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -800,6 +818,37 @@ export default function CatalogPage({ canSeeCosts = false }) {
               <Field label="Barcode">
                 <input value={form.barcode} onChange={(event) => update("barcode", event.target.value)} />
               </Field>
+              {!editing && (
+                <Field label="Quantità da caricare">
+                  <input
+                    type="number"
+                    min="0"
+                    max="9999"
+                    step="1"
+                    inputMode="numeric"
+                    value={form.quantity}
+                    onChange={(event) => update("quantity", event.target.value)}
+                    placeholder="0"
+                  />
+                  <small className="catalog-markup">
+                    <span>I pezzi vengono caricati in magazzino e l'articolo è subito vendibile.</span>
+                  </small>
+                </Field>
+              )}
+              {!editing && (options.locations || []).length > 1 && (
+                <Field label="Sede del carico">
+                  <select
+                    value={form.location || options.locations[0].id}
+                    onChange={(event) => update("location", event.target.value)}
+                  >
+                    {options.locations.map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              )}
             </div>
             <footer>
               <button type="button" className="secondary-action" onClick={close}>

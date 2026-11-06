@@ -131,6 +131,62 @@ class ProductVariantViewSet(CatalogViewSet):
                 skus.append(sku)
         return Response({"skus": skus})
 
+    @action(detail=True, methods=("post",), url_path="initial-stock")
+    @transaction.atomic
+    def initial_stock(self, request, pk=None):
+        """Carica la giacenza di un articolo appena creato dal catalogo.
+
+        È pensato solo per il primo carico: se l'articolo ha già movimenti di
+        magazzino si usano la rettifica o il carico da fattura.
+        """
+        from core.models import Location
+        from inventory.models import StockBalance, StockMovement
+        from inventory.services import post_stock_movement
+
+        variant = ProductVariant.objects.select_for_update().get(pk=self.get_object().pk)
+        try:
+            quantity = int(str(request.data.get("quantity", "")).strip())
+        except (TypeError, ValueError):
+            raise ValidationError({"quantity": "Indica una quantità intera."})
+        if not 1 <= quantity <= 9999:
+            raise ValidationError({"quantity": "La quantità deve essere compresa tra 1 e 9999."})
+        location_id = request.data.get("location")
+        locations = Location.objects.filter(is_active=True)
+        if location_id:
+            from rest_framework.serializers import UUIDField
+            location = locations.filter(pk=UUIDField().run_validation(location_id)).first()
+        else:
+            location = locations.order_by("code", "pk").first()
+        if location is None:
+            raise ValidationError({"location": "Seleziona una sede attiva per il carico."})
+        if StockMovement.objects.filter(variant=variant).exists():
+            raise ValidationError(
+                "L'articolo ha già movimenti di magazzino: per aggiungere pezzi usa la rettifica "
+                "dal Magazzino o il carico della fattura."
+            )
+        try:
+            post_stock_movement(
+                variant=variant,
+                location=location,
+                movement_type=StockMovement.Type.INITIAL_STOCK,
+                quantity_delta=quantity,
+                unit_cost=variant.purchase_price,
+                source_type="catalog.ProductVariant",
+                source_id=variant.pk,
+                reference_number=variant.sku,
+                notes="Carico iniziale dal catalogo",
+                created_by=request.user,
+            )
+        except DjangoValidationError as error:
+            raise ValidationError(error.messages)
+        balance = StockBalance.objects.get(variant=variant, location=location)
+        return Response({
+            "variant": str(variant.pk),
+            "location": str(location.pk),
+            "location_name": location.name,
+            "quantity_on_hand": balance.quantity_on_hand,
+        }, status=201)
+
     @action(detail=False, methods=("post",), url_path="bulk-update")
     @transaction.atomic
     def bulk_update(self, request):
