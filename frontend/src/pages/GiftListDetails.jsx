@@ -9,11 +9,12 @@ const money = (value) => new Intl.NumberFormat("it-IT", { style: "currency", cur
 const statusLabel = { OPEN: "Aperta", CLOSED: "Chiusa", CANCELLED: "Annullata" };
 const paymentLabel = { CASH: "Contanti", CARD: "Carta", OTHER: "Altro" };
 
-async function readRows(resource, giftListId) {
+// basePath è sempre un indirizzo fisso ("/gift-lists/items/" o "/gift-lists/contributions/").
+async function readRows(basePath, giftListId) {
   const rows = [];
   for (let page = 1; ; page += 1) {
     const data = await request(
-      `/gift-lists/${resource}/?gift_list=${giftListId}&page_size=200&page=${page}&ordering=created_at`,
+      `${basePath}?gift_list=${giftListId}&page_size=200&page=${page}&ordering=created_at`,
     );
     rows.push(...(data.results || data));
     if (!data.next) return rows;
@@ -40,7 +41,10 @@ export default function GiftListDetails({ giftListId, startAdding = false, onClo
     async function load() {
       try {
         const detail = await request(`/gift-lists/lists/${giftListId}/`);
-        let entries = await readRows(detail.mode === "CONTRIBUTIONS" ? "contributions" : "items", giftListId);
+        let entries = await readRows(
+          detail.mode === "CONTRIBUTIONS" ? "/gift-lists/contributions/" : "/gift-lists/items/",
+          giftListId,
+        );
         if (detail.mode === "PRODUCTS") {
           entries = await Promise.all(
             entries.map(async (entry) => {

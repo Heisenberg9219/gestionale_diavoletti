@@ -44,12 +44,12 @@ class StockLevelFilterTests(TestCase):
         ProductBarcode.objects.create(variant=cls.variants["B"], code="8000000000123", is_primary=True, barcode_type="OTHER", source="INTERNAL")
         ProductBarcode.objects.create(variant=cls.variants["B"], code="8000000000124", is_primary=False, barcode_type="OTHER", source="INTERNAL")
         User = get_user_model()
-        cls.clerk = User.objects.create_user(email="sl-clerk@example.com", password="test-password")
-        cls.clerk.groups.add(Group.objects.get_or_create(name="Commesso")[0])
+        cls.owner = User.objects.create_user(email="sl-owner@example.com", password="test-password")
+        cls.owner.groups.add(Group.objects.get_or_create(name="Titolare")[0])
 
     def get(self, query):
         client = APIClient()
-        client.force_authenticate(self.clerk)
+        client.force_authenticate(self.owner)
         response = client.get(f"/api/v1/inventory/stock/{query}")
         self.assertEqual(response.status_code, 200, response.data)
         return response.data
