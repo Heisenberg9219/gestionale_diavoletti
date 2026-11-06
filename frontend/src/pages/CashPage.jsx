@@ -167,7 +167,12 @@ export default function CashPage({ onNavigate }) {
             const shown = sales.filter((sale) => salesFilter === "ALL" || methodsOf(sale).has(salesFilter));
             const methodLabel = (sale) =>
               [...methodsOf(sale)]
-                .map((method) => ({ CASH: "Contanti", CARD: "Carta", VOUCHER: "Buono" })[method] || "Altro")
+                .map(
+                  (method) =>
+                    ({ CASH: "Contanti", CARD: "Carta", GIFT_CARD: "Gift card", STORE_CREDIT: "Buono reso" })[
+                      method
+                    ] || "Altro",
+                )
                 .join(" + ") || "—";
             return (
               <>
