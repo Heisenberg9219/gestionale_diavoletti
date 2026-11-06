@@ -1,5 +1,14 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import { ArrowLeftRight, History, Minus, PencilLine, Plus, Search, Warehouse } from "lucide-react";
+import {
+  ArrowLeftRight,
+  ClipboardList,
+  History,
+  Minus,
+  PencilLine,
+  Plus,
+  Search,
+  Warehouse,
+} from "lucide-react";
 import { request } from "../api";
 import PaginationControls from "../components/PaginationControls";
 import { notify } from "../components/Toasts";
@@ -159,6 +168,23 @@ export default function InventoryPage() {
     }
   }
 
+  async function reorder(item) {
+    try {
+      await request("/reorders/items/add/", {
+        method: "POST",
+        body: JSON.stringify({
+          variant: item.variant,
+          location: item.location,
+          requested_quantity: 1,
+          reason: item.quantity_on_hand <= 0 ? "Articolo esaurito" : "Dal magazzino",
+        }),
+      });
+      notify(`${item.product_name || item.variant_sku} aggiunto ai riordini.`);
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
   function changeLevel(value) {
     setLevel(value);
     setPanel(null);
@@ -279,6 +305,15 @@ export default function InventoryPage() {
                         <ArrowLeftRight size={15} /> Sposta
                       </button>
                     )}
+                    <button
+                      type="button"
+                      title="Aggiungi ai riordini"
+                      aria-label="Aggiungi ai riordini"
+                      className={item.quantity_on_hand <= lowMax ? "reorder-hint" : ""}
+                      onClick={() => reorder(item)}
+                    >
+                      <ClipboardList size={15} />
+                    </button>
                     <button
                       type="button"
                       title="Ultimi movimenti"
