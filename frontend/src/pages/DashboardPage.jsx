@@ -372,9 +372,7 @@ export default function DashboardPage({ user, onLogout }) {
             <Menu size={22} />
           </button>
           <div className="app-crumbs">
-            <span>
-              {groupOfActive && groupOfActive !== active ? `${groupOfActive} / ${active}` : "I Diavoletti"}
-            </span>
+            <span>{groupOfActive ? `${groupOfActive} / ${active}` : "I Diavoletti"}</span>
             <strong>{active || "I Diavoletti"}</strong>
           </div>
           <button className="app-search-button" type="button" onClick={() => setPaletteOpen(true)}>

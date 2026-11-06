@@ -1837,3 +1837,90 @@ kbd,
   gap: 8px;
   padding: 12px;
 }
+
+/* ---------- Clienti: scheda cliente ---------- */
+.customer-open {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+.customer-open:hover {
+  color: var(--red);
+  text-decoration: underline;
+}
+.customer-row.open {
+  background: #fdf7f7;
+  box-shadow: inset 3px 0 0 var(--red);
+}
+.sales-split.has-detail .customer-heading,
+.sales-split.has-detail .customer-row {
+  grid-template-columns: 34px minmax(160px, 1.4fr) minmax(120px, 1fr) 84px;
+}
+.sales-split.has-detail .customer-heading > :nth-child(4),
+.sales-split.has-detail .customer-row > :nth-child(4) {
+  display: none;
+}
+.customer-card-actions {
+  display: flex;
+  gap: 6px;
+}
+.customer-card-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.customer-card-kpis > div {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.customer-card-kpis span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+.customer-card-kpis b {
+  font: 600 17px var(--mono);
+}
+.customer-card-section {
+  display: grid;
+  gap: 2px;
+}
+.customer-card-section h4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+.customer-card-line {
+  display: grid;
+  grid-template-columns: minmax(90px, auto) 1fr auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 7px 0;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+.customer-card-line span {
+  color: var(--muted);
+}
+.customer-card-line .money {
+  color: var(--ink);
+  font-family: var(--mono);
+}
+.customer-card-line .mono {
+  font-family: var(--mono);
+}
+.customer-card .empty-note {
+  padding: 12px 0;
+  text-align: left;
+}
