@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { request } from "../api";
 import { askConfirm } from "../components/Dialogs";
+import { notify } from "../components/Toasts";
 import "../new-sale.css";
 
 const euro = new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" });
@@ -34,7 +35,27 @@ const paymentLabels = {
   STORE_CREDIT: "Buono reso",
 };
 
-export default function NewSalePage({ onNavigate, exchangeCredit, onClearExchange }) {
+// Importi tondi proposti per i contanti: esatto e le banconote più vicine sopra il dovuto.
+function quickCashAmounts(due) {
+  if (!Number.isFinite(due) || due <= 0) return [];
+  const options = [
+    due,
+    Math.ceil(due / 5) * 5,
+    Math.ceil(due / 10) * 10,
+    Math.ceil(due / 20) * 20,
+    Math.ceil(due / 50) * 50,
+    Math.ceil(due / 100) * 100,
+  ];
+  return [...new Set(options.map((value) => Math.round(value * 100) / 100))].slice(0, 5);
+}
+
+export default function NewSalePage({
+  onNavigate,
+  exchangeCredit,
+  onClearExchange,
+  initialQuery,
+  onConsumeQuery,
+}) {
   const [session, setSession] = useState(null);
   const [register, setRegister] = useState(null);
   const [sale, setSale] = useState(null);
@@ -109,6 +130,48 @@ export default function NewSalePage({ onNavigate, exchangeCredit, onClearExchang
       )
       .finally(() => setCheckingSession(false));
   }, []);
+
+  // Il pagamento resta aperto accanto al carrello e si aggiorna quando cambia il totale.
+  const lineCount = sale?.lines?.length || 0;
+  const saleTotal = sale?.final_total_amount;
+  useEffect(() => {
+    if (!lineCount) {
+      setPaymentOpen(false);
+      return;
+    }
+    if (!paying) openPayment({ auto: true });
+  }, [lineCount, saleTotal]);
+
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.key === "F4") {
+        event.preventDefault();
+        if (session && register) openCustomerPicker();
+      } else if (event.key === "F8") {
+        event.preventDefault();
+        if (!lineCount || paying) return;
+        if (paymentOpen) payNow();
+        else openPayment();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  // F2 da qualsiasi pagina riporta il cursore sul campo di scansione.
+  useEffect(() => {
+    const focusScan = () => inputRef.current?.focus();
+    window.addEventListener("diavoletti:focus-scan", focusScan);
+    return () => window.removeEventListener("diavoletti:focus-scan", focusScan);
+  }, []);
+
+  // Articolo scelto dalla ricerca globale (Ctrl K → Vendi).
+  useEffect(() => {
+    if (!initialQuery || !session || !register) return;
+    setQuery(initialQuery);
+    onConsumeQuery?.();
+    inputRef.current?.focus();
+  }, [initialQuery, session, register, onConsumeQuery]);
 
   async function ensureSale() {
     if (sale) return sale;
@@ -437,7 +500,7 @@ export default function NewSalePage({ onNavigate, exchangeCredit, onClearExchang
       voucherRequest.current += 1;
     };
   }, [paymentOpen, voucherDropdown, voucherCode]);
-  async function openPayment() {
+  async function openPayment({ auto = false } = {}) {
     try {
       const currentSale = await request(`/sales/sales/${sale.id}/`);
       const remaining = Math.max(0, paymentTotal(currentSale));
@@ -453,11 +516,33 @@ export default function NewSalePage({ onNavigate, exchangeCredit, onClearExchang
       setPaymentReference("");
       setPaymentError("");
       setPaymentOpen(true);
-      if (exchangeCredit?.code && !exchangeApplied && remaining > 0)
+      // Il credito del cambio si applica quando si sceglie di pagare, non a ogni articolo aggiunto.
+      if (!auto && exchangeCredit?.code && !exchangeApplied && remaining > 0)
         await applyVoucher(exchangeCredit.code, currentSale);
     } catch (error) {
       setMessage(`Impossibile preparare il pagamento: ${error.message}`);
     }
+  }
+
+  // Pulsante principale del pagamento (anche con F8).
+  async function payNow() {
+    if (paying || !sale) return;
+    if (exchangeCredit?.code && !exchangeApplied && Math.round(paymentTotal(sale) * 100) > 0) {
+      await applyVoucher(exchangeCredit.code, sale);
+      return;
+    }
+    if (Math.round(paymentTotal(sale) * 100) > 0) {
+      if (splitPayment) await registerSplitPayment();
+      else await registerPayment(true);
+    } else await completePayment();
+  }
+
+  function openCustomerPicker() {
+    setCustomerOpen(true);
+    setCustomerQuery("");
+    setCustomers([]);
+    setCustomerLoading(true);
+    setCustomerError("");
   }
   async function applyVoucher(codeArg, saleArg) {
     const baseSale = saleArg || sale;
@@ -580,6 +665,7 @@ export default function NewSalePage({ onNavigate, exchangeCredit, onClearExchang
         onClearExchange?.();
       }
       setMessage(doneMessage);
+      notify(doneMessage);
       inputRef.current?.focus();
     } catch (error) {
       setPaymentError(`Vendita non conclusa: ${error.message}`);
@@ -682,6 +768,7 @@ export default function NewSalePage({ onNavigate, exchangeCredit, onClearExchang
         setSale(null);
         setLabels({});
         setMessage(`Vendita ${confirmed.number} registrata correttamente.`);
+        notify(`Vendita ${confirmed.number} registrata correttamente.`);
         inputRef.current?.focus();
       }
     } catch (error) {
@@ -735,6 +822,7 @@ export default function NewSalePage({ onNavigate, exchangeCredit, onClearExchang
       setSale(null);
       setLabels({});
       setMessage(`Vendita ${confirmed.number} registrata correttamente.`);
+      notify(`Vendita ${confirmed.number} registrata correttamente.`);
     } catch (error) {
       const remaining = Math.max(0, paymentTotal(updated)).toFixed(2);
       setSplitCash("0.00");
@@ -883,6 +971,20 @@ export default function NewSalePage({ onNavigate, exchangeCredit, onClearExchang
               ))}
             </div>
           )}
+          <div className="shortcut-bar" aria-label="Tasti rapidi">
+            <span>
+              <kbd>F2</kbd>cerca articolo
+            </span>
+            <span>
+              <kbd>F4</kbd>associa cliente
+            </span>
+            <span>
+              <kbd>F8</kbd>incassa
+            </span>
+            <span>
+              <kbd>Ctrl K</kbd>ricerca generale
+            </span>
+          </div>
           <div className="pos-hint">
             <Barcode size={19} />
             <span>
@@ -900,16 +1002,7 @@ export default function NewSalePage({ onNavigate, exchangeCredit, onClearExchang
             <span>{sale?.lines?.length || 0} righe</span>
           </div>
           <div className="sale-tools">
-            <button
-              type="button"
-              onClick={() => {
-                setCustomerOpen(true);
-                setCustomerQuery("");
-                setCustomers([]);
-                setCustomerLoading(true);
-                setCustomerError("");
-              }}
-            >
+            <button type="button" onClick={openCustomerPicker}>
               {selectedCustomer?.full_name || sale?.customer_name || "Associa cliente"}
             </button>
             <button type="button" onClick={openGiftLists}>
@@ -1035,6 +1128,363 @@ export default function NewSalePage({ onNavigate, exchangeCredit, onClearExchang
             )}
           </div>
         </aside>
+        {paymentOpen && (
+          <aside className="payment-layer checkout-docked" aria-label="Pagamento vendita">
+            <section className="payment-dialog checkout-dialog">
+              <header>
+                <div>
+                  <p className="eyebrow">Pagamento</p>
+                  <h3>Incassa la vendita</h3>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Chiudi"
+                  disabled={paying}
+                  onClick={() => setPaymentOpen(false)}
+                >
+                  <X size={20} />
+                </button>
+              </header>
+              <div className="checkout-summary">
+                <div>
+                  <span>Totale vendita</span>
+                  <strong>{euro.format(Number(sale?.final_total_amount || 0))}</strong>
+                </div>
+                <div>
+                  <span>Già pagato</span>
+                  <strong>
+                    {euro.format((sale?.payments || []).reduce((sum, item) => sum + Number(item.amount), 0))}
+                  </strong>
+                </div>
+                <div className="checkout-remaining">
+                  <span>Residuo da pagare</span>
+                  <strong>{euro.format(Math.max(0, paymentTotal(sale)))}</strong>
+                </div>
+              </div>
+              {Number(sale?.manual_total_adjustment || 0) !== 0 && (
+                <p className="payment-change">
+                  {sale.manual_override_reason?.startsWith("Sconto")
+                    ? sale.manual_override_reason
+                    : "Arrotondamento applicato"}
+                  : {Number(sale.manual_total_adjustment) > 0 ? "+" : ""}
+                  {euro.format(Number(sale.manual_total_adjustment))}
+                </p>
+              )}
+              {Boolean(sale?.payments?.length) && (
+                <div className="checkout-payments">
+                  <h4>Pagamenti registrati</h4>
+                  {sale.payments.map((item) => (
+                    <div key={item.id}>
+                      <span>
+                        {paymentLabels[item.method] || item.method}
+                        {item.method === "CASH" && Number(item.cash_change_amount) > 0 && (
+                          <small>Resto consegnato: {euro.format(Number(item.cash_change_amount))}</small>
+                        )}
+                      </span>
+                      <strong>{euro.format(Number(item.amount))}</strong>
+                      <button
+                        type="button"
+                        className="secondary-action"
+                        disabled={paying}
+                        onClick={() => removePayment(item)}
+                      >
+                        Rimuovi
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <details className="checkout-options">
+                <summary>Sconto, arrotondamento e buoni</summary>
+                <div className="voucher-apply rounding-row">
+                  <label>
+                    Sconto sul totale %
+                    <input
+                      inputMode="decimal"
+                      value={totalDiscount}
+                      placeholder="Es. 10"
+                      disabled={paying || Boolean(sale?.payments?.length)}
+                      onChange={(event) => setTotalDiscount(event.target.value)}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="secondary-action"
+                    disabled={paying || Boolean(sale?.payments?.length)}
+                    onClick={applyTotalDiscount}
+                  >
+                    Applica sconto
+                  </button>
+                  <small>
+                    Calcolato su {euro.format(Number(sale?.calculated_total_amount || 0))}; poi puoi
+                    arrotondare il risultato.
+                  </small>
+                </div>
+                <div className="voucher-apply rounding-row">
+                  <label>
+                    Totale arrotondato €
+                    <input
+                      inputMode="decimal"
+                      value={roundedTotal}
+                      disabled={paying || Boolean(sale?.payments?.length)}
+                      onChange={(event) => setRoundedTotal(event.target.value)}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="secondary-action"
+                    disabled={paying || Boolean(sale?.payments?.length)}
+                    onClick={applyRounding}
+                  >
+                    Arrotonda
+                  </button>
+                  <small>Disponibile prima di registrare pagamenti.</small>
+                </div>
+                <div className="voucher-apply">
+                  <div
+                    className="voucher-picker"
+                    onBlur={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget)) setVoucherDropdown(false);
+                    }}
+                  >
+                    <label>
+                      Codice buono
+                      <input
+                        value={voucherCode}
+                        disabled={paying}
+                        role="combobox"
+                        aria-expanded={voucherDropdown}
+                        aria-controls="voucher-options"
+                        aria-autocomplete="list"
+                        autoComplete="off"
+                        onFocus={() => setVoucherDropdown(true)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") setVoucherDropdown(false);
+                          if (event.key === "ArrowDown") {
+                            event.preventDefault();
+                            setVoucherDropdown(true);
+                            document.getElementById("voucher-options")?.querySelector("button")?.focus();
+                          }
+                        }}
+                        onChange={(event) => {
+                          voucherRequest.current += 1;
+                          setVoucherOptions([]);
+                          setVoucherLoading(true);
+                          setVoucherDropdown(true);
+                          setVoucherCode(event.target.value);
+                        }}
+                        placeholder="Cerca o seleziona un buono"
+                      />
+                    </label>
+                    {voucherDropdown && (
+                      <div
+                        className="voucher-options"
+                        id="voucher-options"
+                        role="listbox"
+                        aria-label="Buoni utilizzabili"
+                      >
+                        {voucherLoading && <p role="status">Caricamento buoni…</p>}
+                        {voucherSearchError && <p role="alert">{voucherSearchError}</p>}
+                        {!voucherLoading && !voucherSearchError && !voucherOptions.length && (
+                          <p>Nessun buono utilizzabile trovato.</p>
+                        )}
+                        {voucherOptions.map((voucher) => (
+                          <button
+                            key={voucher.id}
+                            type="button"
+                            role="option"
+                            aria-selected={voucherCode === voucher.code}
+                            disabled={paying}
+                            onClick={() => {
+                              setVoucherCode(voucher.code);
+                              setVoucherDropdown(false);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Escape") setVoucherDropdown(false);
+                              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                                event.preventDefault();
+                                (event.key === "ArrowDown"
+                                  ? event.currentTarget.nextElementSibling
+                                  : event.currentTarget.previousElementSibling
+                                )?.focus?.();
+                              }
+                            }}
+                          >
+                            <strong>{voucher.code}</strong>
+                            <span>Saldo: {euro.format(Number(voucher.current_balance))}</span>
+                          </button>
+                        ))}
+                        {voucherMore && <p>Continua a scrivere per restringere i risultati.</p>}
+                      </div>
+                    )}
+                  </div>
+                  <button type="button" className="secondary-action" disabled={paying} onClick={applyVoucher}>
+                    Usa buono
+                  </button>
+                </div>
+              </details>
+              {Math.round(paymentTotal(sale) * 100) > 0 ? (
+                <section className="checkout-entry">
+                  <h4>Pagamento</h4>
+                  {!splitPayment && (
+                    <div className="checkout-methods" role="group" aria-label="Metodo di pagamento">
+                      {["CASH", "CARD"].map((method) => (
+                        <button
+                          key={method}
+                          type="button"
+                          aria-pressed={paymentMethod === method}
+                          disabled={paying}
+                          onClick={() => {
+                            setPaymentMethod(method);
+                            setPaymentError("");
+                          }}
+                        >
+                          {method === "CASH" ? (
+                            <Banknote size={24} aria-hidden="true" />
+                          ) : method === "CARD" ? (
+                            <CreditCard size={24} aria-hidden="true" />
+                          ) : (
+                            <CreditCard size={24} aria-hidden="true" />
+                          )}
+                          {paymentLabels[method]}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <label className="checkout-split">
+                    <input
+                      type="checkbox"
+                      checked={splitPayment}
+                      disabled={paying}
+                      onChange={(event) => {
+                        setSplitPayment(event.target.checked);
+                        const remaining = Math.max(0, paymentTotal(sale)).toFixed(2);
+                        setPaymentAmount(remaining);
+                        setCashReceived(remaining);
+                        setSplitCash(remaining);
+                        setSplitCard("0.00");
+                        setPaymentError("");
+                      }}
+                    />
+                    Dividi tra più metodi di pagamento
+                  </label>
+                  {splitPayment && (
+                    <>
+                      <label>
+                        Pagamento contanti €
+                        <input
+                          inputMode="decimal"
+                          value={splitCash}
+                          disabled={paying}
+                          onChange={(event) => {
+                            setSplitCash(event.target.value);
+                            setCashReceived(event.target.value);
+                          }}
+                        />
+                      </label>
+                      <label>
+                        Pagamento carta €
+                        <input
+                          inputMode="decimal"
+                          value={splitCard}
+                          disabled={paying}
+                          onChange={(event) => setSplitCard(event.target.value)}
+                        />
+                      </label>
+                      <p className="checkout-split-total">
+                        Totale inserito: {euro.format((decimal(splitCash) || 0) + (decimal(splitCard) || 0))}{" "}
+                        · Da coprire: {euro.format(Math.max(0, paymentTotal(sale)))}
+                      </p>
+                    </>
+                  )}
+                  {(splitPayment ? decimal(splitCash) > 0 : paymentMethod === "CASH") && (
+                    <label>
+                      Contanti consegnati dal cliente €
+                      <input
+                        inputMode="decimal"
+                        value={cashReceived}
+                        disabled={paying}
+                        onChange={(event) => setCashReceived(event.target.value)}
+                      />
+                    </label>
+                  )}
+                  {(splitPayment ? decimal(splitCash) > 0 : paymentMethod === "CASH") && (
+                    <div className="quick-cash" role="group" aria-label="Importi rapidi">
+                      {quickCashAmounts(decimal(splitPayment ? splitCash : paymentAmount)).map((amount) => (
+                        <button
+                          key={amount}
+                          type="button"
+                          disabled={paying}
+                          onClick={() => setCashReceived(amount.toFixed(2))}
+                        >
+                          {euro.format(amount)}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {!splitPayment && paymentMethod !== "CASH" && (
+                    <details className="checkout-options">
+                      <summary>Aggiungi riferimento transazione</summary>
+                      <label>
+                        Riferimento <small>Facoltativo</small>
+                        <input
+                          value={paymentReference}
+                          disabled={paying}
+                          onChange={(event) => setPaymentReference(event.target.value)}
+                          placeholder="Es. numero transazione"
+                        />
+                      </label>
+                    </details>
+                  )}
+                  {(splitPayment ? decimal(splitCash) > 0 : paymentMethod === "CASH") &&
+                    Number.isFinite(decimal(cashReceived)) &&
+                    decimal(cashReceived) >= decimal(splitPayment ? splitCash : paymentAmount) && (
+                      <p className="payment-change">
+                        Resto da consegnare:{" "}
+                        {euro.format(
+                          Math.max(
+                            0,
+                            decimal(cashReceived) - decimal(splitPayment ? splitCash : paymentAmount),
+                          ),
+                        )}
+                      </p>
+                    )}
+                </section>
+              ) : (
+                <p className="payment-change">Il totale è coperto. Puoi concludere la vendita.</p>
+              )}
+              {voucherMessage && (
+                <p className="voucher-message" role="status">
+                  {voucherMessage}
+                </p>
+              )}
+              {paymentError && (
+                <p className="payment-error" role="alert">
+                  {paymentError}
+                </p>
+              )}
+              <footer>
+                <button
+                  type="button"
+                  className="secondary-action"
+                  disabled={paying}
+                  onClick={() => setPaymentOpen(false)}
+                >
+                  Torna alla vendita
+                </button>
+                <button type="button" className="primary-action" disabled={paying} onClick={payNow}>
+                  {paying
+                    ? "Attendi..."
+                    : Math.round(paymentTotal(sale) * 100) <= 0
+                      ? "Concludi vendita · F8"
+                      : exchangeCredit?.code && !exchangeApplied
+                        ? "Applica il credito del cambio · F8"
+                        : "Incassa e concludi · F8"}
+                </button>
+              </footer>
+            </section>
+          </aside>
+        )}
       </div>
       {reservedPrompt && (
         <div className="payment-layer" role="dialog" aria-modal="true" aria-labelledby="reserved-title">
@@ -1277,364 +1727,6 @@ export default function NewSalePage({ onNavigate, exchangeCredit, onClearExchang
             {!giftLoading && !selectedGiftList && !giftLists.length && (
               <p className="selection-empty">Nessuna lista articoli aperta.</p>
             )}
-          </section>
-        </div>
-      )}
-      {paymentOpen && (
-        <div className="payment-layer" role="dialog" aria-modal="true" aria-label="Pagamento vendita">
-          <button
-            className="payment-backdrop"
-            aria-label="Chiudi"
-            disabled={paying}
-            onClick={() => setPaymentOpen(false)}
-          />
-          <section className="payment-dialog checkout-dialog">
-            <header>
-              <div>
-                <p className="eyebrow">Pagamento</p>
-                <h3>Incassa la vendita</h3>
-              </div>
-              <button
-                type="button"
-                aria-label="Chiudi"
-                disabled={paying}
-                onClick={() => setPaymentOpen(false)}
-              >
-                <X size={20} />
-              </button>
-            </header>
-            <div className="checkout-summary">
-              <div>
-                <span>Totale vendita</span>
-                <strong>{euro.format(Number(sale?.final_total_amount || 0))}</strong>
-              </div>
-              <div>
-                <span>Già pagato</span>
-                <strong>
-                  {euro.format((sale?.payments || []).reduce((sum, item) => sum + Number(item.amount), 0))}
-                </strong>
-              </div>
-              <div className="checkout-remaining">
-                <span>Residuo da pagare</span>
-                <strong>{euro.format(Math.max(0, paymentTotal(sale)))}</strong>
-              </div>
-            </div>
-            {Number(sale?.manual_total_adjustment || 0) !== 0 && (
-              <p className="payment-change">
-                {sale.manual_override_reason?.startsWith("Sconto")
-                  ? sale.manual_override_reason
-                  : "Arrotondamento applicato"}
-                : {Number(sale.manual_total_adjustment) > 0 ? "+" : ""}
-                {euro.format(Number(sale.manual_total_adjustment))}
-              </p>
-            )}
-            {Boolean(sale?.payments?.length) && (
-              <div className="checkout-payments">
-                <h4>Pagamenti registrati</h4>
-                {sale.payments.map((item) => (
-                  <div key={item.id}>
-                    <span>
-                      {paymentLabels[item.method] || item.method}
-                      {item.method === "CASH" && Number(item.cash_change_amount) > 0 && (
-                        <small>Resto consegnato: {euro.format(Number(item.cash_change_amount))}</small>
-                      )}
-                    </span>
-                    <strong>{euro.format(Number(item.amount))}</strong>
-                    <button
-                      type="button"
-                      className="secondary-action"
-                      disabled={paying}
-                      onClick={() => removePayment(item)}
-                    >
-                      Rimuovi
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <details className="checkout-options">
-              <summary>Sconto, arrotondamento e buoni</summary>
-              <div className="voucher-apply rounding-row">
-                <label>
-                  Sconto sul totale %
-                  <input
-                    inputMode="decimal"
-                    value={totalDiscount}
-                    placeholder="Es. 10"
-                    disabled={paying || Boolean(sale?.payments?.length)}
-                    onChange={(event) => setTotalDiscount(event.target.value)}
-                  />
-                </label>
-                <button
-                  type="button"
-                  className="secondary-action"
-                  disabled={paying || Boolean(sale?.payments?.length)}
-                  onClick={applyTotalDiscount}
-                >
-                  Applica sconto
-                </button>
-                <small>
-                  Calcolato su {euro.format(Number(sale?.calculated_total_amount || 0))}; poi puoi arrotondare
-                  il risultato.
-                </small>
-              </div>
-              <div className="voucher-apply rounding-row">
-                <label>
-                  Totale arrotondato €
-                  <input
-                    inputMode="decimal"
-                    value={roundedTotal}
-                    disabled={paying || Boolean(sale?.payments?.length)}
-                    onChange={(event) => setRoundedTotal(event.target.value)}
-                  />
-                </label>
-                <button
-                  type="button"
-                  className="secondary-action"
-                  disabled={paying || Boolean(sale?.payments?.length)}
-                  onClick={applyRounding}
-                >
-                  Arrotonda
-                </button>
-                <small>Disponibile prima di registrare pagamenti.</small>
-              </div>
-              <div className="voucher-apply">
-                <div
-                  className="voucher-picker"
-                  onBlur={(event) => {
-                    if (!event.currentTarget.contains(event.relatedTarget)) setVoucherDropdown(false);
-                  }}
-                >
-                  <label>
-                    Codice buono
-                    <input
-                      value={voucherCode}
-                      disabled={paying}
-                      role="combobox"
-                      aria-expanded={voucherDropdown}
-                      aria-controls="voucher-options"
-                      aria-autocomplete="list"
-                      autoComplete="off"
-                      onFocus={() => setVoucherDropdown(true)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Escape") setVoucherDropdown(false);
-                        if (event.key === "ArrowDown") {
-                          event.preventDefault();
-                          setVoucherDropdown(true);
-                          document.getElementById("voucher-options")?.querySelector("button")?.focus();
-                        }
-                      }}
-                      onChange={(event) => {
-                        voucherRequest.current += 1;
-                        setVoucherOptions([]);
-                        setVoucherLoading(true);
-                        setVoucherDropdown(true);
-                        setVoucherCode(event.target.value);
-                      }}
-                      placeholder="Cerca o seleziona un buono"
-                    />
-                  </label>
-                  {voucherDropdown && (
-                    <div
-                      className="voucher-options"
-                      id="voucher-options"
-                      role="listbox"
-                      aria-label="Buoni utilizzabili"
-                    >
-                      {voucherLoading && <p role="status">Caricamento buoni…</p>}
-                      {voucherSearchError && <p role="alert">{voucherSearchError}</p>}
-                      {!voucherLoading && !voucherSearchError && !voucherOptions.length && (
-                        <p>Nessun buono utilizzabile trovato.</p>
-                      )}
-                      {voucherOptions.map((voucher) => (
-                        <button
-                          key={voucher.id}
-                          type="button"
-                          role="option"
-                          aria-selected={voucherCode === voucher.code}
-                          disabled={paying}
-                          onClick={() => {
-                            setVoucherCode(voucher.code);
-                            setVoucherDropdown(false);
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key === "Escape") setVoucherDropdown(false);
-                            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                              event.preventDefault();
-                              (event.key === "ArrowDown"
-                                ? event.currentTarget.nextElementSibling
-                                : event.currentTarget.previousElementSibling
-                              )?.focus?.();
-                            }
-                          }}
-                        >
-                          <strong>{voucher.code}</strong>
-                          <span>Saldo: {euro.format(Number(voucher.current_balance))}</span>
-                        </button>
-                      ))}
-                      {voucherMore && <p>Continua a scrivere per restringere i risultati.</p>}
-                    </div>
-                  )}
-                </div>
-                <button type="button" className="secondary-action" disabled={paying} onClick={applyVoucher}>
-                  Usa buono
-                </button>
-              </div>
-            </details>
-            {Math.round(paymentTotal(sale) * 100) > 0 ? (
-              <section className="checkout-entry">
-                <h4>Pagamento</h4>
-                {!splitPayment && (
-                  <div className="checkout-methods" role="group" aria-label="Metodo di pagamento">
-                    {["CASH", "CARD"].map((method) => (
-                      <button
-                        key={method}
-                        type="button"
-                        aria-pressed={paymentMethod === method}
-                        disabled={paying}
-                        onClick={() => {
-                          setPaymentMethod(method);
-                          setPaymentError("");
-                        }}
-                      >
-                        {method === "CASH" ? (
-                          <Banknote size={24} aria-hidden="true" />
-                        ) : method === "CARD" ? (
-                          <CreditCard size={24} aria-hidden="true" />
-                        ) : (
-                          <CreditCard size={24} aria-hidden="true" />
-                        )}
-                        {paymentLabels[method]}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <label className="checkout-split">
-                  <input
-                    type="checkbox"
-                    checked={splitPayment}
-                    disabled={paying}
-                    onChange={(event) => {
-                      setSplitPayment(event.target.checked);
-                      const remaining = Math.max(0, paymentTotal(sale)).toFixed(2);
-                      setPaymentAmount(remaining);
-                      setCashReceived(remaining);
-                      setSplitCash(remaining);
-                      setSplitCard("0.00");
-                      setPaymentError("");
-                    }}
-                  />
-                  Dividi tra più metodi di pagamento
-                </label>
-                {splitPayment && (
-                  <>
-                    <label>
-                      Pagamento contanti €
-                      <input
-                        inputMode="decimal"
-                        value={splitCash}
-                        disabled={paying}
-                        onChange={(event) => {
-                          setSplitCash(event.target.value);
-                          setCashReceived(event.target.value);
-                        }}
-                      />
-                    </label>
-                    <label>
-                      Pagamento carta €
-                      <input
-                        inputMode="decimal"
-                        value={splitCard}
-                        disabled={paying}
-                        onChange={(event) => setSplitCard(event.target.value)}
-                      />
-                    </label>
-                    <p className="checkout-split-total">
-                      Totale inserito: {euro.format((decimal(splitCash) || 0) + (decimal(splitCard) || 0))} ·
-                      Da coprire: {euro.format(Math.max(0, paymentTotal(sale)))}
-                    </p>
-                  </>
-                )}
-                {(splitPayment ? decimal(splitCash) > 0 : paymentMethod === "CASH") && (
-                  <label>
-                    Contanti consegnati dal cliente €
-                    <input
-                      inputMode="decimal"
-                      value={cashReceived}
-                      disabled={paying}
-                      onChange={(event) => setCashReceived(event.target.value)}
-                    />
-                  </label>
-                )}
-                {!splitPayment && paymentMethod !== "CASH" && (
-                  <details className="checkout-options">
-                    <summary>Aggiungi riferimento transazione</summary>
-                    <label>
-                      Riferimento <small>Facoltativo</small>
-                      <input
-                        value={paymentReference}
-                        disabled={paying}
-                        onChange={(event) => setPaymentReference(event.target.value)}
-                        placeholder="Es. numero transazione"
-                      />
-                    </label>
-                  </details>
-                )}
-                {(splitPayment ? decimal(splitCash) > 0 : paymentMethod === "CASH") &&
-                  Number.isFinite(decimal(cashReceived)) &&
-                  decimal(cashReceived) >= decimal(splitPayment ? splitCash : paymentAmount) && (
-                    <p className="payment-change">
-                      Resto da consegnare:{" "}
-                      {euro.format(
-                        Math.max(
-                          0,
-                          decimal(cashReceived) - decimal(splitPayment ? splitCash : paymentAmount),
-                        ),
-                      )}
-                    </p>
-                  )}
-              </section>
-            ) : (
-              <p className="payment-change">Il totale è coperto. Puoi concludere la vendita.</p>
-            )}
-            {voucherMessage && (
-              <p className="voucher-message" role="status">
-                {voucherMessage}
-              </p>
-            )}
-            {paymentError && (
-              <p className="payment-error" role="alert">
-                {paymentError}
-              </p>
-            )}
-            <footer>
-              <button
-                type="button"
-                className="secondary-action"
-                disabled={paying}
-                onClick={() => setPaymentOpen(false)}
-              >
-                Torna alla vendita
-              </button>
-              <button
-                type="button"
-                className="primary-action"
-                disabled={paying}
-                onClick={() =>
-                  Math.round(paymentTotal(sale) * 100) > 0
-                    ? splitPayment
-                      ? registerSplitPayment()
-                      : registerPayment(true)
-                    : completePayment()
-                }
-              >
-                {paying
-                  ? "Attendi..."
-                  : Math.round(paymentTotal(sale) * 100) <= 0
-                    ? "Concludi vendita"
-                    : "Incassa e concludi"}
-              </button>
-            </footer>
           </section>
         </div>
       )}

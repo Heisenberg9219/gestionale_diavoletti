@@ -37,6 +37,7 @@ export default function ReturnsPage({
 }) {
   const [returns, setReturns] = useState([]);
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   // Nuovo reso
@@ -280,6 +281,7 @@ export default function ReturnsPage({
 
   // ---------- Schermate ----------
 
+  let detailPanel = null;
   if (detail) {
     const saleLines = Object.fromEntries((detailData?.sale?.lines || []).map((line) => [line.id, line]));
     const lines = detailData?.lines || [];
@@ -292,12 +294,12 @@ export default function ReturnsPage({
       Number(voucher.current_balance) === Number(voucher.initial_amount);
     const voucherBlock =
       detail.status === "CONFIRMED" || (detail.status === "CANCELLED" && detail.confirmed_at);
-    return (
-      <section className="returns-page return-detail">
+    detailPanel = (
+      <section className="returns-detail-panel return-detail">
         <div className="page-title-row">
           <div>
-            <p className="eyebrow">Operatività · Resi</p>
-            <h2>{detail.number || "Reso in bozza"}</h2>
+            <p className="eyebrow">Dettaglio reso</p>
+            <h3 className="return-detail-heading">{detail.number || "Reso in bozza"}</h3>
             <span>
               {detailData?.sale ? `Scontrino ${detailData.sale.number}` : "Scontrino collegato"} · creato il{" "}
               {dateTimeFormat.format(new Date(detail.created_at))}
@@ -472,6 +474,9 @@ export default function ReturnsPage({
       </section>
     );
   }
+
+  const shownReturns =
+    statusFilter === "ALL" ? returns : returns.filter((item) => item.status === statusFilter);
 
   if (wizard) {
     if (completed) {
@@ -666,53 +671,93 @@ export default function ReturnsPage({
           </span>
         </div>
       </div>
-      <form
-        className="returns-search"
-        onSubmit={(event) => {
-          event.preventDefault();
-          loadReturns();
-        }}
-      >
-        <Search size={18} />
-        <input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Cerca reso, scontrino, cliente o articolo"
-        />
-        <button>Ricerca</button>
-      </form>
-      <article className="returns-list">
-        <div className="returns-heading">
-          <span>Reso</span>
-          <span>Stato</span>
-          <span>Credito</span>
-        </div>
-        {loading && <p>Caricamento resi...</p>}
-        {error && <p className="return-error">{error}</p>}
-        {!loading && !error && !returns.length && <p>Nessun reso corrisponde alla ricerca.</p>}
-        {!loading && !error && (
-          <PaginatedRows items={returns} resetKey={search}>
-            {(rows) =>
-              rows.map((item) => (
-                <button type="button" className="return-row" key={item.id} onClick={() => openDetail(item)}>
-                  <div>
-                    <strong>{item.number || "Reso in bozza"}</strong>
-                    <span>
-                      {item.reason || "Reso"} · {dateFormat.format(new Date(item.created_at))}
-                    </span>
-                  </div>
-                  <span className={`return-status ${item.status.toLowerCase()}`}>
-                    {STATUS_LABELS[item.status]}
-                  </span>
-                  <strong>
-                    {item.status === "CONFIRMED" ? euro.format(Number(item.total_refund_amount || 0)) : "—"}
-                  </strong>
+      <div className="returns-split">
+        <section className="returns-list-panel" aria-label="Storico resi">
+          <div className="returns-list-tools">
+            <form
+              className="returns-search"
+              onSubmit={(event) => {
+                event.preventDefault();
+                loadReturns();
+              }}
+            >
+              <Search size={18} />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Cerca reso, scontrino, cliente o articolo"
+              />
+              <button>Ricerca</button>
+            </form>
+            <div className="seg" role="group" aria-label="Filtra per stato">
+              {[
+                ["ALL", "Tutti"],
+                ["DRAFT", "Bozze"],
+                ["CONFIRMED", "Confermati"],
+                ["CANCELLED", "Annullati"],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={statusFilter === value}
+                  onClick={() => setStatusFilter(value)}
+                >
+                  {label}
+                  {value !== "ALL" && ` · ${returns.filter((item) => item.status === value).length}`}
                 </button>
-              ))
-            }
-          </PaginatedRows>
+              ))}
+            </div>
+          </div>
+          <article className="returns-list">
+            {loading && <p>Caricamento resi...</p>}
+            {error && <p className="return-error">{error}</p>}
+            {!loading && !error && !shownReturns.length && (
+              <p className="empty-note">
+                {returns.length
+                  ? "Nessun reso in questo stato."
+                  : search
+                    ? "Nessun reso corrisponde alla ricerca."
+                    : "Ancora nessun reso. Per farne uno, apri lo Storico vendite e scegli lo scontrino."}
+              </p>
+            )}
+            {!loading && !error && (
+              <PaginatedRows items={shownReturns} resetKey={`${search}-${statusFilter}`}>
+                {(rows) =>
+                  rows.map((item) => (
+                    <button
+                      type="button"
+                      className={`return-row${detail?.id === item.id ? " selected" : ""}`}
+                      key={item.id}
+                      onClick={() => openDetail(item)}
+                    >
+                      <div>
+                        <strong>{item.number || "Reso in bozza"}</strong>
+                        <span>
+                          {item.reason || "Reso"} · {dateFormat.format(new Date(item.created_at))}
+                        </span>
+                      </div>
+                      <span className={`return-status ${item.status.toLowerCase()}`}>
+                        {STATUS_LABELS[item.status]}
+                      </span>
+                      <strong>
+                        {item.status === "CONFIRMED"
+                          ? euro.format(Number(item.total_refund_amount || 0))
+                          : "—"}
+                      </strong>
+                    </button>
+                  ))
+                }
+              </PaginatedRows>
+            )}
+          </article>
+        </section>
+        {detailPanel || (
+          <div className="returns-detail-panel returns-detail-empty">
+            <b>Seleziona un reso</b>
+            <span>Il dettaglio compare qui: articoli resi, buono emesso e azioni disponibili.</span>
+          </div>
         )}
-      </article>
+      </div>
     </section>
   );
 }
